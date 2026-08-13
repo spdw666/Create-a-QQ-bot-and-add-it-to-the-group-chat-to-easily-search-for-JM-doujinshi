@@ -147,3 +147,67 @@ def test_render_search_page():
     assert '11. 《本10》' in p3 and '12. 《本11》' in p3
     assert '已查看完全部结果' in p3  # 末页提示
     assert '下一页' not in p3
+
+
+def test_handle_message_branches():
+    """消息层端到端：mock 群消息事件与 API，验证各命令路由与回复内容"""
+    import asyncio
+    import time as _time
+    import jm_niang
+    from jm_niang import handle_message, SEARCH_COOLDOWN, SEARCH_STATE
+
+    BOT_QQ = '2337295608'
+    GROUP = 810152420
+    sent = []
+
+    async def fake_api(action, params=None, timeout=60):
+        sent.append((action, params))
+        return {'retcode': 0, 'status': 'ok', 'data': {}}
+
+    def mk_msg(text):
+        return {'post_type': 'message', 'message_type': 'group',
+                'group_id': GROUP, 'user_id': 999,
+                'message': [{'type': 'at', 'data': {'qq': BOT_QQ}},
+                            {'type': 'text', 'data': {'text': text}}]}
+
+    def run(text):
+        sent.clear()
+        SEARCH_COOLDOWN.clear()  # 测试间清除冷却
+        asyncio.run(handle_message(None, fake_api, mk_msg(text), BOT_QQ))
+
+    # 1. 说明
+    run('说明')
+    assert len(sent) == 1 and '使用说明' in sent[0][1]['message']
+    # 2. 关键词搜索：12本 → 第1页 + 翻页提示 + 状态缓存
+    jm_niang.search_album = lambda kw, n=5: [{'title': f'本{i}', 'chapter_count': 1,
+                                              'id': str(100000 + i), 'author': 'a'}
+                                             for i in range(12)]
+    run('人妻')
+    joined = '\n'.join(p['message'] for _, p in sent)
+    assert '第 1/3 页' in joined and '共 12 本' in joined and '下一页' in joined
+    assert SEARCH_STATE.get(GROUP) is not None
+    # 3. 翻页：下一页 → 第2页（全局序号6-10）
+    run('下一页')
+    m2 = sent[0][1]['message']
+    assert '第 2/3 页' in m2 and '6. 《本5》' in m2 and '10. 《本9》' in m2
+    # 4. 作者搜索
+    jm_niang.search_author_album = lambda a, n=5: [{'title': f'{a}本{i}', 'chapter_count': 1,
+                                                    'id': str(200000 + i), 'author': a}
+                                                   for i in range(3)]
+    run('作者 きょくちょ')
+    joined3 = '\n'.join(p['message'] for _, p in sent)
+    assert '作者「きょくちょ」' in joined3 and 'ID：200000' in joined3
+    # 5. 作者无结果文案
+    jm_niang.search_author_album = lambda a, n=5: []
+    run('作者 不存在')
+    assert sent[-1][1]['message'] == '没有找到该作者所对应的本子'
+    # 6. 随机推荐
+    jm_niang.get_random_hot_album = lambda: {'id': '123456', 'title': '随机本',
+                                             'author': '作者A', 'chapter_count': 3}
+    run('随机')
+    joined6 = '\n'.join(p['message'] for _, p in sent)
+    assert '随机推荐' in joined6 and 'ID：123456' in joined6
+    # 7. 无结果关键词文案
+    jm_niang.search_album = lambda kw, n=5: []
+    run('无此本子')
+    assert sent[-1][1]['message'] == '没有找到该关键词所对应的本子'

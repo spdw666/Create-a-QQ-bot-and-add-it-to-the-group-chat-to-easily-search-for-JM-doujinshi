@@ -452,6 +452,7 @@ async def handle_message(ws, api, msg, bot_qq):
     at_me, text = parse_group_message(msg, bot_qq)
     if not at_me:
         return
+    log(f'收到群 {group_id} 用户 {user_id} 命令: {text[:40]!r}')
 
     # 说明命令：@机器人 + 说明/帮助/help 等
     if text.lower() in HELP_WORDS:
