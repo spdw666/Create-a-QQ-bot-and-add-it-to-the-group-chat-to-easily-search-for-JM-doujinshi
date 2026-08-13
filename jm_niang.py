@@ -130,7 +130,7 @@ HELP_TEXT = (
     '🔍 搜索：@我 + 关键词/本子名\n'
     '   例：@JM娘 人妻、@JM娘 枫与铃、@JM娘 琉璃川\n'
     '   返回最新 5 本（含ID）；自动匹配简体/繁体/日文写法\n'
-    '   💡 结果超过5本时，@我 回复「下一页」继续翻页\n\n'
+    '   💡 结果超过5本时，直接发「下一页」翻页（无需@）\n\n'
     '✍️ 作者搜索：@我 作者 + 名字\n'
     '   例：@JM娘 作者 きょくちょ\n'
     '   返回该作者最新的 5 本（含ID），同样支持翻页\n\n'
@@ -154,8 +154,8 @@ CANCEL_WORDS = {'取消', '停止', 'stop', 'cancel', '算了'}
 # 随机推荐类命令词
 RANDOM_WORDS = {'随机', '抽一本', '推荐', '来一本', '随缘', 'random'}
 
-# 翻页命令词（查看上一次搜索的下一页）
-NEXT_WORDS = {'下一页', '翻页', '下页', 'next', '继续'}
+# 翻页命令词（支持免@：用户直接发「下一页」即可翻页；'继续'等宽泛词不收录，防普通聊天误触发）
+NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
 
 # 每群关键词搜索冷却（group_id -> 上次搜索时间戳）
 SEARCH_COOLDOWN = {}
@@ -189,10 +189,37 @@ def render_search_page(state, page):
         lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
                      f'   🔢 ID：{r["id"]}')
     if page < total_pages:
-        lines.append('💡 @我 回复「下一页」继续查看')
+        lines.append('💡 直接发「下一页」即可翻页（无需@我）')
     else:
         lines.append('✅ 已查看完全部结果')
     return '\n'.join(lines)
+
+
+async def handle_next_page(api, group_id, silent=False):
+    """翻页：显示上一次搜索的下一页。silent=True（免@触发）时无状态则静默忽略"""
+    state = SEARCH_STATE.get(group_id)
+    if not state or time.time() - state['ts'] > SEARCH_STATE_TTL:
+        SEARCH_STATE.pop(group_id, None)
+        if not silent:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '📄 没有可翻页的搜索结果（请先搜索，或翻页状态已过期）'
+            })
+        return
+    state['ts'] = time.time()  # 刷新有效期
+    state['page'] += 1
+    total_pages = max(1, (len(state['results']) + PAGE_SIZE - 1) // PAGE_SIZE)
+    if state['page'] > total_pages:
+        state['page'] = total_pages
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'📄 已经是最后一页了，共 {len(state["results"])} 本'
+        })
+        return
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': render_search_page(state, state['page'])
+    })
 
 # 当前正在下载的 album_id 列表（下载开始append，结束remove；取消时取最近一个）
 ACTIVE_DOWNLOADS = []
@@ -451,6 +478,9 @@ async def handle_message(ws, api, msg, bot_qq):
     # 必须 @机器人 才响应
     at_me, text = parse_group_message(msg, bot_qq)
     if not at_me:
+        # 翻页命令免@：用户直接发「下一页」即可翻页（无需先@机器人），无状态则静默
+        if text and text.lower() in NEXT_WORDS:
+            await handle_next_page(api, group_id, silent=True)
         return
     log(f'收到群 {group_id} 用户 {user_id} 命令: {text[:40]!r}')
 
@@ -509,30 +539,9 @@ async def handle_message(ws, api, msg, bot_qq):
         })
         return
 
-    # 翻页：@机器人 + 下一页/翻页 → 显示上一次搜索的下一页
+    # 翻页：@机器人 + 下一页/翻页（也支持免@直接发，见上方 parse 后处理）
     if text.lower() in NEXT_WORDS:
-        state = SEARCH_STATE.get(group_id)
-        if not state or time.time() - state['ts'] > SEARCH_STATE_TTL:
-            SEARCH_STATE.pop(group_id, None)
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': '📄 没有可翻页的搜索结果（请先搜索，或翻页状态已过期）'
-            })
-            return
-        state['ts'] = time.time()  # 刷新有效期
-        state['page'] += 1
-        total_pages = max(1, (len(state['results']) + PAGE_SIZE - 1) // PAGE_SIZE)
-        if state['page'] > total_pages:
-            state['page'] = total_pages
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': f'📄 已经是最后一页了，共 {len(state["results"])} 本'
-            })
-            return
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': render_search_page(state, state['page'])
-        })
+        await handle_next_page(api, group_id)
         return
 
     # 作者搜索：@机器人 + 作者 + 名字 → 该作者的本子

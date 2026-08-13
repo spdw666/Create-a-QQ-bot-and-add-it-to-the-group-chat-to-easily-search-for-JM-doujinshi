@@ -164,16 +164,24 @@ def test_handle_message_branches():
         sent.append((action, params))
         return {'retcode': 0, 'status': 'ok', 'data': {}}
 
-    def mk_msg(text):
+    def mk_msg(text, at=True):
+        segs = []
+        if at:
+            segs.append({'type': 'at', 'data': {'qq': BOT_QQ}})
+        segs.append({'type': 'text', 'data': {'text': text}})
         return {'post_type': 'message', 'message_type': 'group',
-                'group_id': GROUP, 'user_id': 999,
-                'message': [{'type': 'at', 'data': {'qq': BOT_QQ}},
-                            {'type': 'text', 'data': {'text': text}}]}
+                'group_id': GROUP, 'user_id': 999, 'message': segs}
 
     def run(text):
         sent.clear()
         SEARCH_COOLDOWN.clear()  # 测试间清除冷却
         asyncio.run(handle_message(None, fake_api, mk_msg(text), BOT_QQ))
+
+    def run_no_at(text):
+        """免@消息（普通群消息，未@机器人）"""
+        sent.clear()
+        SEARCH_COOLDOWN.clear()
+        asyncio.run(handle_message(None, fake_api, mk_msg(text, at=False), BOT_QQ))
 
     # 1. 说明
     run('说明')
@@ -190,6 +198,20 @@ def test_handle_message_branches():
     run('下一页')
     m2 = sent[0][1]['message']
     assert '第 2/3 页' in m2 and '6. 《本5》' in m2 and '10. 《本9》' in m2
+    # 3b. 免@翻页：用户不@机器人直接发「下一页」也能翻页
+    run_no_at('下一页')
+    m2b = sent[0][1]['message']
+    assert '第 3/3 页' in m2b and '12. 《本11》' in m2b
+    # 3c. 免@翻页到最后一页后再翻 → 提示最后一页
+    run_no_at('翻页')
+    assert '最后一页' in sent[0][1]['message']
+    # 3d. 免@无状态时静默（普通聊天出现「下一页」不打扰）
+    SEARCH_STATE.pop(GROUP, None)
+    run_no_at('下一页')
+    assert sent == []
+    # 3e. 免@时其他文本不响应（聊天内容不触发）
+    run_no_at('今天天气不错')
+    assert sent == []
     # 4. 作者搜索
     jm_niang.search_author_album = lambda a, n=5: [{'title': f'{a}本{i}', 'chapter_count': 1,
                                                     'id': str(200000 + i), 'author': a}
