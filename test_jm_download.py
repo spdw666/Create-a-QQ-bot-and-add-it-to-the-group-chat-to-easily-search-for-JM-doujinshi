@@ -131,13 +131,19 @@ def test_extract_author():
 
 
 def test_extract_page():
-    """页码跳转解析：'第2页' / '第 2 页' / '2页'；聊天文本不误触发"""
+    """页码跳转解析：'第2页' / '第 2 页' / '2页' / 中文数字'第四页'；聊天文本不误触发"""
     from jm_niang import extract_page
     assert extract_page('第2页') == 2
     assert extract_page('第 2 页') == 2
     assert extract_page('2页') == 2
     assert extract_page('第12页') == 12
     assert extract_page('第1页') == 1
+    assert extract_page('第四页') == 4
+    assert extract_page('第十页') == 10
+    assert extract_page('第十二页') == 12
+    assert extract_page('第二十五页') == 25
+    assert extract_page('二十页') == 20
+    assert extract_page('四页') == 4  # 不带「第」也可
     assert extract_page('你看第3页') is None  # 带前后缀的聊天文本不是命令
     assert extract_page('下一页') is None
     assert extract_page('') is None

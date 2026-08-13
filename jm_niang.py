@@ -274,12 +274,33 @@ def extract_album_id(text: str):
     return None
 
 
+# 中文数字（页码跳转用）：支持 一~九十九
+CN_DIGITS = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+
+
+def _cn_to_int(s):
+    """中文数字转整数：四→4，十→10，十二→12，二十→20，二十五→25；无法转换返回 None"""
+    if '十' not in s:
+        return CN_DIGITS.get(s)
+    if s == '十':
+        return 10
+    if s.startswith('十'):
+        return 10 + CN_DIGITS.get(s[1], 0)
+    if s.endswith('十'):
+        return CN_DIGITS.get(s[0], 0) * 10
+    head, tail = s.split('十', 1)
+    return CN_DIGITS.get(head, 0) * 10 + CN_DIGITS.get(tail, 0)
+
+
 def extract_page(text: str):
-    """提取页码跳转命令：'第2页' / '第 2 页' / '2页' → 2；否则 None"""
+    """提取页码跳转命令：'第2页' / '第 2 页' / '2页' / '第四页' → 2；否则 None"""
     if not text:
         return None
-    m = re.fullmatch(r'第?\s*(\d{1,2})\s*页', text)
-    return int(m.group(1)) if m else None
+    m = re.fullmatch(r'第?\s*(\d{1,2}|[一二三四五六七八九十]{1,3})\s*页', text)
+    if not m:
+        return None
+    g = m.group(1)
+    return int(g) if g.isdigit() else _cn_to_int(g)
 
 
 def extract_author(text: str):
