@@ -319,8 +319,12 @@ def _search_by_core_chars(keyword, client, max_count, search_fn, match_field):
             detail = client.get_album_detail(aid)
         except Exception:
             continue  # 单本详情拉取失败则跳过
-        if not _field_match(getattr(detail, match_field, '') or '', chars):
-            continue  # 详情主字段不含全部核心字 → 丢弃（宁缺毋滥）
+        if match_field:
+            field_val = getattr(detail, match_field, None)
+            if isinstance(field_val, list):
+                field_val = ' '.join(str(x) for x in field_val)
+            if not _field_match(field_val or '', chars):
+                continue  # 详情主字段不含全部核心字 → 丢弃（宁缺毋滥）
         results.append({
             'id': str(detail.id),
             'title': detail.title,
@@ -385,8 +389,13 @@ def _do_search(keyword, search_method, match_field, max_pages=3):
             detail = c.get_album_detail(aid)
         except Exception:
             return None  # 单本详情拉取失败则跳过
-        if not any(v in (getattr(detail, match_field, '') or '') for v in variants):
-            return None  # 搜索页条目命中但详情主字段不含关键词（条目带角色名/tag等），丢弃
+        if match_field:
+            # 校验详情字段含变体子串（list 字段如 tag_list 先拼成字符串）
+            field_val = getattr(detail, match_field, None)
+            if isinstance(field_val, list):
+                field_val = ' '.join(str(x) for x in field_val)
+            if not any(v in (field_val or '') for v in variants):
+                return None  # 搜索页条目命中但详情主字段不含关键词，丢弃
         return {
             'id': str(detail.id),
             'title': detail.title,
@@ -418,6 +427,71 @@ def search_author_album(author, max_count=5):
     """按作者名搜索本子（匹配作者字段），返回前 max_count 本。无结果返回 []，请求失败返回 None"""
     results = _do_search(author, 'search_author', 'author')
     return results[:max_count] if results else results
+
+
+def search_tag_album(tag, max_count=5):
+    """按标签搜索本子（标签是独立元数据，标题不一定含标签词，故不校验详情字段）。无结果返回 []，请求失败返回 None"""
+    results = _do_search(tag, 'search_tag', None)
+    return results[:max_count] if results else results
+
+
+# 排行榜 API 映射（jmcomic 原生支持，返回 JmSearchPage 与搜索同构）
+RANK_METHODS = {'day': 'day_ranking', 'week': 'week_ranking', 'month': 'month_ranking'}
+
+
+def get_ranking(rank_type, max_pages=3):
+    """
+    排行榜（day/week/month）：拉前 max_pages 页（每页约24本）并发取详情，返回全量结果。
+    榜单无变体概念，直接复用搜索的并发详情模式。
+
+    :return: list[dict{id,title,author,chapter_count}]；请求失败返回 None
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    method = RANK_METHODS.get(rank_type)
+    if not method:
+        return None
+    try:
+        option = _apply_proxy(JmOption.default())
+        client = option.new_jm_client()
+        rank_fn = getattr(client, method)
+    except Exception:
+        return None
+    ids, seen = [], set()
+    for page in range(1, max_pages + 1):
+        try:
+            new_ids = list(rank_fn(page=page).iter_id())
+        except Exception:
+            break  # 该榜单没有更多页或请求失败
+        if not new_ids:
+            break
+        for aid in new_ids:
+            if aid not in seen:
+                seen.add(aid)
+                ids.append(aid)
+    # ponytail: 截断120本（与搜索一致，翻页够用）
+    ids = ids[:120]
+
+    def _fetch(aid):
+        try:
+            opt = _apply_proxy(JmOption.default())
+            c = opt.new_jm_client()
+            detail = c.get_album_detail(aid)
+        except Exception:
+            return None
+        return {
+            'id': str(detail.id),
+            'title': detail.title,
+            'author': detail.author,
+            'chapter_count': len([p for p in detail]),
+        }
+
+    results = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for r in ex.map(_fetch, ids):
+            if r:
+                results.append(r)
+    return results
 
 
 # 今日属性标签池（随机抽一个标签，搜该标签随机附赠一本）

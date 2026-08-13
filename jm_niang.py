@@ -30,6 +30,8 @@ from jm_download import (
     get_random_tag_album,
     search_album,
     search_author_album,
+    search_tag_album,
+    get_ranking,
     count_images,
     cleanup_old_dirs,
     cancel_download,
@@ -138,6 +140,11 @@ HELP_TEXT = (
     '✍️ 作者搜索：@我 作者 + 名字\n'
     '   例：@JM娘 作者 きょくちょ\n'
     '   返回该作者最新的 5 本（含ID），同样支持翻页\n\n'
+    '🏷️ 标签搜索：@我 标签 + 标签名\n'
+    '   例：@JM娘 标签 人妻\n'
+    '   返回该标签最新的 5 本（含ID），支持翻页\n\n'
+    '📊 排行榜：@我 日榜/周榜/月榜\n'
+    '   返回榜单前 5 本（含ID），支持翻页\n\n'
     '❓ 查看说明：@我 说明\n'
     '   （也支持：帮助 / help / 使用说明）\n\n'
     '⚠️ 温馨提示\n'
@@ -160,6 +167,9 @@ RANDOM_WORDS = {'随机', '抽一本', '推荐', '来一本', '随缘', 'random'
 
 # 今日属性命令词
 TAG_WORDS = {'今日属性', '属性', 'today'}
+
+# 排行榜命令词
+RANK_WORDS = {'日榜', '周榜', '月榜', 'day', 'week', 'month'}
 
 # 翻页命令词（支持免@：用户直接发「下一页」即可翻页；'继续'等宽泛词不收录，防普通聊天误触发）
 NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
@@ -316,6 +326,18 @@ def extract_author(text: str):
         return None
     low = text.lower()
     for prefix in ('作者', 'author'):
+        if low.startswith(prefix):
+            rest = text[len(prefix):].strip(' :：、,，')
+            return rest or None
+    return None
+
+
+def extract_tag(text: str):
+    """提取标签搜索命令：'标签 xxx' / '标签:xxx' / 'tag xxx' → 返回标签名，否则 None"""
+    if not text:
+        return None
+    low = text.lower()
+    for prefix in ('标签', 'tag'):
         if low.startswith(prefix):
             rest = text[len(prefix):].strip(' :：、,，')
             return rest or None
@@ -610,6 +632,85 @@ async def handle_message(ws, api, msg, bot_qq):
                        f'✍️ 作者：{escape_cq(info["author"])}  章节：{info["chapter_count"]}章\n'
                        f'🔢 ID：{info["id"]}\n'
                        f'想要？@我 + 发送这个ID 即可打包下载'
+        })
+        return
+
+    # 排行榜：@机器人 + 日榜/周榜/月榜 → 榜单前N本（支持翻页/跳页）
+    if text.lower() in RANK_WORDS:
+        if search_cooldown_hit(group_id):
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '⏳ 查询太快啦，等几秒再试试～'
+            })
+            return
+        rank_type = {'日榜': 'day', '周榜': 'week', '月榜': 'month',
+                     'day': 'day', 'week': 'week', 'month': 'month'}[text.lower()]
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'📊 正在获取{escape_cq(text)}，稍等…'
+        })
+        results = await asyncio.to_thread(get_ranking, rank_type)
+        if results is None:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '❌ 获取榜单失败（网络波动或禁漫拦截），稍后再试试～'
+            })
+            return
+        if not results:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '榜单暂无数据'
+            })
+            return
+        now = time.time()
+        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
+            SEARCH_STATE.pop(gid, None)
+        SEARCH_STATE[group_id] = {
+            'head': f'📊 {escape_cq(text)}',
+            'results': results, 'page': 1, 'ts': now,
+        }
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': render_search_page(SEARCH_STATE[group_id], 1)
+        })
+        return
+
+    # 标签搜索：@机器人 + 标签 + 名称 → 带该标签的本子
+    tag = extract_tag(text)
+    if tag:
+        if search_cooldown_hit(group_id):
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '⏳ 搜索太快啦，等几秒再试试～'
+            })
+            return
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'🏷️ 正在搜索标签「{escape_cq(tag)}」的本子，稍等…'
+        })
+        results = await asyncio.to_thread(search_tag_album, tag, 200)
+        if results is None:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '❌ 搜索失败（网络波动或禁漫拦截），稍后再试试～'
+            })
+            return
+        if not results:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '没有找到该标签所对应的本子'
+            })
+            return
+        now = time.time()
+        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
+            SEARCH_STATE.pop(gid, None)
+        SEARCH_STATE[group_id] = {
+            'head': f'🏷️ 标签「{escape_cq(tag)}」的本子',
+            'results': results, 'page': 1, 'ts': now,
+        }
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': render_search_page(SEARCH_STATE[group_id], 1)
         })
         return
 

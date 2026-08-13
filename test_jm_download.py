@@ -130,6 +130,16 @@ def test_extract_author():
     assert extract_author('') is None
 
 
+def test_extract_tag():
+    """标签搜索命令解析：'标签 xxx' / '标签:xxx' / 'tag xxx'；非标签命令返回 None"""
+    from jm_niang import extract_tag
+    assert extract_tag('标签 人妻') == '人妻'
+    assert extract_tag('标签:百合') == '百合'
+    assert extract_tag('tag 触手') == '触手'
+    assert extract_tag('人妻') is None
+    assert extract_tag('标签') is None
+
+
 def test_extract_page():
     """页码跳转解析：'第2页' / '第 2 页' / '2页' / 中文数字'第四页'；聊天文本不误触发"""
     from jm_niang import extract_page
@@ -283,6 +293,24 @@ def test_handle_message_branches():
     jm_niang.get_random_tag_album = lambda: None
     run('今日属性')
     assert '占卜失败' in sent[-1][1]['message']
+    # 6d. 标签搜索
+    jm_niang.search_tag_album = lambda t, n=5: [{'title': f'{t}本{i}', 'chapter_count': 1,
+                                                 'id': str(300000 + i), 'author': 'a'}
+                                                for i in range(3)]
+    run('标签 人妻')
+    joined_tag_s = '\n'.join(p['message'] for _, p in sent)
+    assert '标签「人妻」' in joined_tag_s and 'ID：300000' in joined_tag_s
+    # 6e. 标签无结果文案
+    jm_niang.search_tag_album = lambda t, n=5: []
+    run('标签 不存在')
+    assert sent[-1][1]['message'] == '没有找到该标签所对应的本子'
+    # 6f. 排行榜
+    jm_niang.get_ranking = lambda rt: [{'title': f'榜{i}', 'chapter_count': 1,
+                                        'id': str(400000 + i), 'author': 'a'}
+                                       for i in range(8)]
+    run('日榜')
+    joined_rank = '\n'.join(p['message'] for _, p in sent)
+    assert '日榜' in joined_rank and '第 1/2 页' in joined_rank and 'ID：400000' in joined_rank
     # 7. 无结果关键词文案
     jm_niang.search_album = lambda kw, n=5: []
     run('无此本子')

@@ -51,6 +51,8 @@
 | `@bot <漫画ID>` | 下载整本 → 加密 ZIP → 上传群文件 + 浏览器链接 | Download an album → encrypted ZIP → group files + browser link |
 | `@bot <关键词/名称>` | 搜索，返回最新 5 本（含 ID），可翻页/跳页 | Search and return the latest 5 results with IDs (paginated) |
 | `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
+| `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
+| `@bot 日榜/周榜/月榜` | 查看排行榜前 5（支持翻页） | Daily / weekly / monthly ranking top 5 (paginated) |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random pick from the hottest albums of the last 30 days |
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本 | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
