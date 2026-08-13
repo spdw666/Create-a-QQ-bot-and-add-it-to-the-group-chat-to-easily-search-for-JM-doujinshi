@@ -200,6 +200,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_PROXY` | ❌ | 可选 HTTP 代理（如 `http://127.0.0.1:7890`；留空 = 直连）。Optional HTTP proxy (empty = direct). |
 | `JM_SAUCENAO_KEY` | ❌ | SauceNAO 识图 API key（免费注册 https://saucenao.com/user.php；未填时以图搜本仅用 iQDB 兜底）。Optional SauceNAO API key for reverse image search (free; without it only iQDB is used). |
 | `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped). |
+| `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 
 ## 测试 Tests
 
