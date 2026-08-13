@@ -218,6 +218,30 @@ def render_search_page(state, page):
     return '\n'.join(lines)
 
 
+def render_image_result(result):
+    """渲染识图结果消息文本（识图分支与重搜共用）"""
+    lines = ['🔍 识图结果：']
+    if result.get('ocr_texts'):
+        lines.append(f'🔤 封面文字：{" / ".join(escape_cq(t) for t in result["ocr_texts"])}')
+    if result.get('llm_words'):
+        lines.append(f'🤖 AI 识别：{" / ".join(escape_cq(t) for t in result["llm_words"])}')
+    if result['source_title']:
+        lines.append(f'📕 来源：《{escape_cq(result["source_title"][:60])}》')
+    if result['source_author']:
+        lines.append(f'✍️ 作者：{escape_cq(result["source_author"])}')
+    if result['source_url']:
+        lines.append(f'🔗 {escape_cq(result["source_url"])}')
+    if result['matches']:
+        lines.append(f'📚 禁漫匹配到 {len(result["matches"])} 本：')
+        for i, r in enumerate(result['matches'], 1):
+            lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
+                         f'   🔢 ID：{r["id"]}')
+        lines.append('想要下载？@我 + 发送对应的ID')
+    else:
+        lines.append('⚠️ 禁漫未搜到同款本子')
+    return '\n'.join(lines)
+
+
 async def handle_next_page(api, group_id, silent=False, page=None):
     """
     翻页/跳页：显示上一次搜索结果的下一页（page=None）或第 page 页。
@@ -841,6 +865,27 @@ async def handle_message(ws, api, msg, bot_qq):
             'group_id': group_id,
             'message': f'🔁 正在重新搜索，稍等…'
         })
+        if kind == 'image':
+            img_bytes = state.get('img_bytes')
+            if not img_bytes:
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': '❌ 图片已过期，请重新发图'
+                })
+                return
+            result = await asyncio.to_thread(search_by_image, img_bytes)
+            if result is None:
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': '❌ 重新识图失败（图源未被识图引擎收录）'
+                })
+                return
+            state['ts'] = time.time()
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': render_image_result(result)
+            })
+            return
         if kind == 'search':
             results = await asyncio.to_thread(search_album, keyword, 200)
         elif kind == 'author':
@@ -958,28 +1003,17 @@ async def handle_message(ws, api, msg, bot_qq):
                            '（SauceNAO/iQDB 对部分本子封面无收录，试试发更清晰的原图）'
             })
             return
-        lines = ['🔍 识图结果：']
-        if result.get('ocr_texts'):
-            lines.append(f'🔤 封面文字：{" / ".join(escape_cq(t) for t in result["ocr_texts"])}')
-        if result.get('llm_words'):
-            lines.append(f'🤖 AI 识别：{" / ".join(escape_cq(t) for t in result["llm_words"])}')
-        if result['source_title']:
-            lines.append(f'📕 来源：《{escape_cq(result["source_title"][:60])}》')
-        if result['source_author']:
-            lines.append(f'✍️ 作者：{escape_cq(result["source_author"])}')
-        if result['source_url']:
-            lines.append(f'🔗 {escape_cq(result["source_url"])}')
-        if result['matches']:
-            lines.append(f'📚 禁漫匹配到 {len(result["matches"])} 本：')
-            for i, r in enumerate(result['matches'], 1):
-                lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
-                             f'   🔢 ID：{r["id"]}')
-            lines.append('想要下载？@我 + 发送对应的ID')
-        else:
-            lines.append('⚠️ 禁漫未搜到同款本子')
+        # 缓存最近一张图到搜索状态：@不对 时用同一张图重新识图
+        now = time.time()
+        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
+            SEARCH_STATE.pop(gid, None)
+        SEARCH_STATE[group_id] = {
+            'kind': 'image', 'keyword': '', 'img_bytes': img_bytes,
+            'head': '🔍 识图', 'results': [], 'page': 1, 'ts': now,
+        }
         await api('send_group_msg', {
             'group_id': group_id,
-            'message': '\n'.join(lines)
+            'message': render_image_result(result)
         })
         return
 
