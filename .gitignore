@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime data (downloaded content, share dir, logs) — never commit
+downloads/
+http_dl/
+*.log
+jm_niang_run.log
+
+# NapCat runtime & config (contains QQ account config) — never commit
+napcat/
+napcat-shell/
+
+# Bot login QR / other artifacts
+qrcode.png
+qq44343.rpm
+start_napcat.bat
