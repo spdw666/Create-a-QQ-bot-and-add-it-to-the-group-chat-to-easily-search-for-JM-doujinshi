@@ -19,7 +19,7 @@ A Python QQ group bot (**JM娘**) that lets group members search and download do
 | `@bot <关键词/名称>` | 搜索并返回最新 **5 本（含ID）**，支持翻页 | Searches and returns the latest **5 results with IDs** (paginated) |
 | `@bot 作者 <作者名>` | 按**作者**搜索，返回 5 本（含ID） | Searches by **author** and returns 5 results with IDs |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random recommendation from the hottest albums of the last 30 days |
-| `@bot 下一页` | 查看上一次搜索的下一页；**直接发「下一页」即可（无需@机器人）** | Next page of the last search; **just send `下一页` — no mention needed** |
+| `@bot 下一页` | 查看上一页；**直接发「下一页」翻页、「第N页」跳页（均无需@机器人）** | Next page of the last search; **just send `下一页` to page or `第N页` to jump (no mention needed)** |
 | `@bot 取消` | 取消正在进行的下载 | Cancels the in-progress download |
 | `@bot 说明` | 查看使用说明 | Shows the help text |
 
@@ -31,7 +31,7 @@ A Python QQ group bot (**JM娘**) that lets group members search and download do
   2. 汉字异体映射（如 `琉→瑠`、`绘→絵`）/ Hanzi variant map (e.g. `琉 → 瑠`, `绘 → 絵`)
   3. 中文虚词→日文假名（如 `与/和→と`、`的/之→の`——搜「枫与铃」能找到「楓と鈴」）/ Chinese function words → Japanese kana (e.g. `与/和 → と`, `的/之 → の` — searching `枫与铃` finds `楓と鈴`)
   4. 核心字降级搜索：拆词逐字搜索，标题含全部核心字即命中（无字典依赖的普适兜底）/ Core-character degraded search: split the query into core characters, search each, keep titles containing all of them (dictionary-free universal fallback)
-- **搜索结果翻页 Paginated results** — 每页 5 本，直接发「下一页」翻完所有匹配本子（无需@机器人）/ 5 per page, just send `下一页` (no mention needed) to page through all matched albums
+- **搜索结果翻页 Paginated results** — 每页 5 本，直接发「下一页」翻页或「第N页」跳页（均无需@机器人）/ 5 per page; send `下一页` to page or `第N页` to jump — both without mentioning the bot
 - **加密 ZIP（AES-128）Encrypted ZIPs** — QQ 上传会扫描 ZIP 内容并静默删除成人文件；加密使扫描失效，上传得以存活（实测：未加密上传 `retcode=1200`，AES 加密 `retcode=0`）/ QQ scans ZIP contents on upload and silently deletes adult files; encryption makes the scan fail, so uploads survive (verified: unencrypted → `retcode=1200`, AES-encrypted → `retcode=0`)
 - **浏览器下载链接 Browser download links** — 每次下载附带 HTTP 直链兜底 / every download also gets an HTTP link as a fallback
 - **CQ 码转义 CQ-code escaping** — 用户可控字符串回显前转义，群成员无法用 `[CQ:...]` 让机器人 @全体/冒名发图 / user-controlled strings are escaped before being echoed, so group members can't make the bot `@all` or send fake images via `[CQ:...]`

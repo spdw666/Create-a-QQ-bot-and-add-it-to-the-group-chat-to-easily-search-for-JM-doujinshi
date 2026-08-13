@@ -130,7 +130,7 @@ HELP_TEXT = (
     '🔍 搜索：@我 + 关键词/本子名\n'
     '   例：@JM娘 人妻、@JM娘 枫与铃、@JM娘 琉璃川\n'
     '   返回最新 5 本（含ID）；自动匹配简体/繁体/日文写法\n'
-    '   💡 结果超过5本时，直接发「下一页」翻页（无需@）\n\n'
+    '   💡 结果超过5本时，直接发「下一页」翻页、「第N页」跳转（无需@）\n\n'
     '✍️ 作者搜索：@我 作者 + 名字\n'
     '   例：@JM娘 作者 きょくちょ\n'
     '   返回该作者最新的 5 本（含ID），同样支持翻页\n\n'
@@ -189,14 +189,17 @@ def render_search_page(state, page):
         lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
                      f'   🔢 ID：{r["id"]}')
     if page < total_pages:
-        lines.append('💡 直接发「下一页」即可翻页（无需@我）')
+        lines.append('💡 直接发「下一页」翻页，或发「第N页」跳转（无需@我）')
     else:
         lines.append('✅ 已查看完全部结果')
     return '\n'.join(lines)
 
 
-async def handle_next_page(api, group_id, silent=False):
-    """翻页：显示上一次搜索的下一页。silent=True（免@触发）时无状态则静默忽略"""
+async def handle_next_page(api, group_id, silent=False, page=None):
+    """
+    翻页/跳页：显示上一次搜索结果的下一页（page=None）或第 page 页。
+    silent=True（免@触发）时无状态则静默忽略；跳转越界自动收敛到有效页。
+    """
     state = SEARCH_STATE.get(group_id)
     if not state or time.time() - state['ts'] > SEARCH_STATE_TTL:
         SEARCH_STATE.pop(group_id, None)
@@ -207,18 +210,22 @@ async def handle_next_page(api, group_id, silent=False):
             })
         return
     state['ts'] = time.time()  # 刷新有效期
-    state['page'] += 1
     total_pages = max(1, (len(state['results']) + PAGE_SIZE - 1) // PAGE_SIZE)
-    if state['page'] > total_pages:
-        state['page'] = total_pages
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': f'📄 已经是最后一页了，共 {len(state["results"])} 本'
-        })
-        return
+    if page is None:
+        target = state['page'] + 1
+        if target > total_pages:
+            state['page'] = total_pages
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': f'📄 已经是最后一页了，共 {len(state["results"])} 本'
+            })
+            return
+    else:
+        target = max(1, min(page, total_pages))  # 跳转越界收敛（第99页→最后一页）
+    state['page'] = target
     await api('send_group_msg', {
         'group_id': group_id,
-        'message': render_search_page(state, state['page'])
+        'message': render_search_page(state, target)
     })
 
 # 当前正在下载的 album_id 列表（下载开始append，结束remove；取消时取最近一个）
@@ -265,6 +272,14 @@ def extract_album_id(text: str):
     if m:
         return m.group(1)
     return None
+
+
+def extract_page(text: str):
+    """提取页码跳转命令：'第2页' / '第 2 页' / '2页' → 2；否则 None"""
+    if not text:
+        return None
+    m = re.fullmatch(r'第?\s*(\d{1,2})\s*页', text)
+    return int(m.group(1)) if m else None
 
 
 def extract_author(text: str):
@@ -478,9 +493,10 @@ async def handle_message(ws, api, msg, bot_qq):
     # 必须 @机器人 才响应
     at_me, text = parse_group_message(msg, bot_qq)
     if not at_me:
-        # 翻页命令免@：用户直接发「下一页」即可翻页（无需先@机器人），无状态则静默
-        if text and text.lower() in NEXT_WORDS:
-            await handle_next_page(api, group_id, silent=True)
+        # 翻页/跳页命令免@：直接发「下一页」或「第N页」，无需先@机器人；无状态则静默
+        page_num = extract_page(text) if text else None
+        if text and (text.lower() in NEXT_WORDS or page_num):
+            await handle_next_page(api, group_id, silent=True, page=page_num)
         return
     log(f'收到群 {group_id} 用户 {user_id} 命令: {text[:40]!r}')
 
@@ -539,9 +555,10 @@ async def handle_message(ws, api, msg, bot_qq):
         })
         return
 
-    # 翻页：@机器人 + 下一页/翻页（也支持免@直接发，见上方 parse 后处理）
-    if text.lower() in NEXT_WORDS:
-        await handle_next_page(api, group_id)
+    # 翻页/跳页：@机器人 + 下一页/翻页/第N页（也支持免@直接发）
+    page_num = extract_page(text)
+    if text.lower() in NEXT_WORDS or page_num:
+        await handle_next_page(api, group_id, page=page_num)
         return
 
     # 作者搜索：@机器人 + 作者 + 名字 → 该作者的本子

@@ -130,6 +130,19 @@ def test_extract_author():
     assert extract_author('') is None
 
 
+def test_extract_page():
+    """页码跳转解析：'第2页' / '第 2 页' / '2页'；聊天文本不误触发"""
+    from jm_niang import extract_page
+    assert extract_page('第2页') == 2
+    assert extract_page('第 2 页') == 2
+    assert extract_page('2页') == 2
+    assert extract_page('第12页') == 12
+    assert extract_page('第1页') == 1
+    assert extract_page('你看第3页') is None  # 带前后缀的聊天文本不是命令
+    assert extract_page('下一页') is None
+    assert extract_page('') is None
+
+
 def test_render_search_page():
     """翻页渲染：每页5本、全局序号、页数/总数、末页提示"""
     import jm_niang
@@ -212,6 +225,27 @@ def test_handle_message_branches():
     # 3e. 免@时其他文本不响应（聊天内容不触发）
     run_no_at('今天天气不错')
     assert sent == []
+    # 3f. 跳页：@机器人 第3页 → 直达第3页
+    SEARCH_STATE[GROUP] = {'head': '🔍 关键词「人妻」',
+                           'results': [{'title': f'本{i}', 'chapter_count': 1,
+                                        'id': str(100000 + i), 'author': 'a'}
+                                       for i in range(12)],
+                           'page': 1, 'ts': _time.time()}
+    run('第3页')
+    m3f = sent[0][1]['message']
+    assert '第 3/3 页' in m3f and '11. 《本10》' in m3f
+    # 3g. 免@跳回第1页
+    run_no_at('第1页')
+    m3g = sent[0][1]['message']
+    assert '第 1/3 页' in m3g and '1. 《本0》' in m3g
+    # 3h. 越界跳转收敛到最后一页
+    run_no_at('第99页')
+    m3h = sent[0][1]['message']
+    assert '第 3/3 页' in m3h
+    # 3i. 聊天里「你看第3页」不是跳转命令
+    run_no_at('你看第3页')
+    assert sent == []
+    SEARCH_STATE.pop(GROUP, None)
     # 4. 作者搜索
     jm_niang.search_author_album = lambda a, n=5: [{'title': f'{a}本{i}', 'chapter_count': 1,
                                                     'id': str(200000 + i), 'author': a}
