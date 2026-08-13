@@ -364,26 +364,81 @@ LOCAL_IMG_PREFIXES = ('/root/Napcat/', '/root/.config/QQ/', '/opt/jmniang/')
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10MB
 
 
-def fetch_image_bytes(img_ref):
-    """下载图片：先试 url（仅 QQ 图片 CDN 域名 + 大小上限，防 SSRF），失败读 file 本地路径（限 NapCat 缓存目录）"""
+def _read_limited(path):
+    """读文件并限大小（10MB）"""
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        return data if len(data) <= MAX_IMAGE_BYTES else None
+    except Exception:
+        return None
+
+
+def _http_fetch(url):
+    """下载图片 URL（域名白名单 + 大小上限）"""
     import requests
+    host = url.split('/')[2].split('?')[0]
+    if not (host.endswith('.qpic.cn') or host == 'multimedia.nt.qq.com.cn'):
+        return None
+    try:
+        r = requests.get(url, timeout=30)
+        return r.content if r.status_code == 200 and len(r.content) <= MAX_IMAGE_BYTES else None
+    except Exception:
+        return None
+
+
+def fetch_image_bytes(img_ref):
+    """
+    下载图片：
+    1. url 下载（仅 QQ 图片 CDN 域名白名单 + 大小上限，防 SSRF）
+    2. file 绝对路径（限 NapCat 缓存目录前缀）
+    3. file 纯文件名（在 NapCat 缓存目录下递归查找）
+    """
+    import glob
     url = img_ref.get('url') or ''
     if url.startswith('http'):
-        host = url.split('/')[2].split('?')[0]
-        if host.endswith('.qpic.cn'):
-            try:
-                r = requests.get(url, timeout=30)
-                if r.status_code == 200 and len(r.content) <= MAX_IMAGE_BYTES:
-                    return r.content
-            except Exception:
-                pass
+        data = _http_fetch(url)
+        if data:
+            return data
     path = img_ref.get('file') or ''
-    if path and path.startswith(LOCAL_IMG_PREFIXES) and os.path.isfile(path):
+    if path:
+        # 绝对路径：仅白名单前缀
+        if os.path.sep in path:
+            if path.startswith(LOCAL_IMG_PREFIXES) and os.path.isfile(path):
+                data = _read_limited(path)
+                if data:
+                    return data
+        else:
+            # 纯文件名（NapCat 通常给文件名）：在 QQ 缓存目录查找（文件名大小写不敏感）
+            for pattern in (f'/root/.config/QQ/*/nt_data/Pic/**/{path}',
+                            f'/root/.config/QQ/NapCat/**/{path}'):
+                for hit in glob.glob(pattern, recursive=True)[:1]:
+                    data = _read_limited(hit)
+                    if data:
+                        return data
+    return None
+
+
+async def fetch_image_with_api(api, img_ref):
+    """识图图片获取：先 url/本地 file；失败用 OneBot get_image API 拿 NapCat 解析出的真实路径再读"""
+    data = await asyncio.to_thread(fetch_image_bytes, img_ref)
+    if data:
+        return data
+    file_name = img_ref.get('file') or ''
+    if file_name:
         try:
-            with open(path, 'rb') as f:
-                data = f.read()
-            if len(data) <= MAX_IMAGE_BYTES:
-                return data
+            resp = await api('get_image', {'file': file_name}, timeout=15)
+            d = (resp or {}).get('data') or {}
+            path = d.get('file') or ''
+            if path and path.startswith(LOCAL_IMG_PREFIXES):
+                data = await asyncio.to_thread(_read_limited, path)
+                if data:
+                    return data
+            url = d.get('url') or ''
+            if url.startswith('http'):
+                data = await asyncio.to_thread(_http_fetch, url)
+                if data:
+                    return data
         except Exception:
             pass
     return None
@@ -824,6 +879,7 @@ async def handle_message(ws, api, msg, bot_qq):
     # 以图搜本：@机器人 + [图片]（text 为空但带图）
     images = extract_images(msg)
     if images:
+        log(f'识图请求: url={images[0]["url"][:100]!r} file={images[0]["file"][:80]!r}')
         if search_cooldown_hit(group_id):
             await api('send_group_msg', {
                 'group_id': group_id,
@@ -834,7 +890,7 @@ async def handle_message(ws, api, msg, bot_qq):
             'group_id': group_id,
             'message': '🔍 正在识图搜本，稍等…'
         })
-        img_bytes = await asyncio.to_thread(fetch_image_bytes, images[0])
+        img_bytes = await fetch_image_with_api(api, images[0])
         if not img_bytes:
             await api('send_group_msg', {
                 'group_id': group_id,

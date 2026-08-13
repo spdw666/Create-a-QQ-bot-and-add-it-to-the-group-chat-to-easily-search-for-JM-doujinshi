@@ -440,14 +440,14 @@ SAUCENAO_KEY = os.environ.get('JM_SAUCENAO_KEY', '').strip()
 
 
 def _sauce_search(img_bytes):
-    """SauceNAO 识图（需 SAUCENAO_KEY）。返回 [(similarity, title, member, source, url)]，失败返回 []"""
+    """SauceNAO 识图（需 SAUCENAO_KEY）。返回 [(similarity, keywords, url)]，失败返回 []"""
     if not SAUCENAO_KEY:
         return []
     try:
         import requests
         r = requests.post('https://saucenao.com/search.php',
                           files={'file': ('img.jpg', img_bytes)},
-                          data={'db': 999, 'output_type': 2, 'numres': 3,
+                          data={'db': 999, 'output_type': 2, 'numres': 5,
                                 'api_key': SAUCENAO_KEY},
                           timeout=60)
         j = r.json()
@@ -456,8 +456,16 @@ def _sauce_search(img_bytes):
         out = []
         for res in j.get('results', []):
             h, d = res.get('header', {}), res.get('data', {})
-            out.append((float(h.get('similarity', 0)), d.get('title') or '',
-                        d.get('member_name') or '', d.get('source') or '',
+            # 提取全部可用搜索词字段（title/jp_name/eng_name/source/creator/author_name/member_name）
+            kws = []
+            for key in ('title', 'jp_name', 'eng_name', 'source', 'member_name',
+                        'author_name', 'creator'):
+                v = d.get(key)
+                if isinstance(v, str) and v.strip():
+                    kws.append(v.strip())
+                elif isinstance(v, list):
+                    kws.extend(str(x).strip() for x in v if str(x).strip())
+            out.append((float(h.get('similarity', 0)), kws,
                         (d.get('ext_urls') or [''])[0]))
         return out
     except Exception:
@@ -501,41 +509,38 @@ def search_by_image(img_bytes):
     :return: dict{source_title, source_author, source_url, matches:[{id,title,author,chapter_count}]}；
              识图无结果返回 None（matches 可为空列表=识图成功但禁漫未匹配）
     """
-    candidates = []  # (title, member, url) 全部展示候选
+    candidates = []  # (kws, url) 展示候选
     match_candidates = []  # 参与禁漫匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
-    for sim, title, member, _src, url in _sauce_search(img_bytes):
+    for sim, kws, url in _sauce_search(img_bytes):
         # doujinshi 封面经裁剪/压缩/加水印后相似度普遍 40-60%，≥40 纳入展示
-        if sim >= 40:
-            candidates.append((title, member, url))
+        if sim >= 40 and kws:
+            candidates.append((kws, url))
             if sim >= 55:
-                match_candidates.append((title, member))
+                match_candidates.append(kws)
             if len(candidates) >= 3:
                 break
     for title, url in _iqdb_search(img_bytes):
-        candidates.append((title, '', url))
-        match_candidates.append((title, ''))
+        candidates.append(([title], url))
+        match_candidates.append([title])
         if len(candidates) >= 5:
             break
     if not candidates:
         return None
-    # 识图标题/作者 → 禁漫搜索（四层变体自动生效）
+    # 识图关键词 → 禁漫搜索（四层变体自动生效）
     matches, seen = [], set()
-    for title, member in match_candidates[:5]:
-        for r in (search_album(title, max_count=3) or []):
-            if r['id'] not in seen:
-                seen.add(r['id'])
-                matches.append(r)
-        if member:
-            for r in (search_author_album(member, 3) or []):
+    for kws in match_candidates[:5]:
+        for kw in kws[:3]:
+            for r in (search_album(kw, max_count=3) or []):
                 if r['id'] not in seen:
                     seen.add(r['id'])
                     matches.append(r)
         if len(matches) >= 5:
             break
+    first_kws = candidates[0][0]
     return {
-        'source_title': candidates[0][0],
-        'source_author': candidates[0][1],
-        'source_url': candidates[0][2],
+        'source_title': first_kws[0],
+        'source_author': first_kws[1] if len(first_kws) > 1 else '',
+        'source_url': candidates[0][1],
         'matches': matches[:5],
     }
 
