@@ -502,6 +502,46 @@ def _iqdb_search(img_bytes):
         return []
 
 
+# OCR 忽略词（封面常见无关文字）
+OCR_IGNORE = {'r18', 'r-18', '18禁', 'for adults', 'only', 'adults', '無修正', '无修正',
+              'dl版', 'dl', 'comic', 'manga', 'sample'}
+
+_OCR_ENGINE = None
+
+
+def _get_ocr_engine():
+    """RapidOCR 懒加载单例（模型加载较慢，避免每次实例化）"""
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
+
+
+def _ocr_text(img_bytes):
+    """RapidOCR 提取图片文字（中/英/日）。返回 [text]，失败返回 []"""
+    import os
+    import tempfile
+    try:
+        fd, path = tempfile.mkstemp(suffix='.jpg')
+        with os.fdopen(fd, 'wb') as f:
+            f.write(img_bytes)
+        try:
+            result, _ = _get_ocr_engine()(path)
+        finally:
+            os.remove(path)
+        if not result:
+            return []
+        texts = []
+        for _box, text, score in result:
+            t = (text or '').strip()
+            if score >= 0.5 and 2 <= len(t) <= 40 and t.lower() not in OCR_IGNORE:
+                texts.append(t)
+        return texts
+    except Exception:
+        return []
+
+
 def search_by_image(img_bytes):
     """
     以图搜本：SauceNAO（需 JM_SAUCENAO_KEY）+ iqdb 兜底识图，用识图标题/作者去禁漫搜索匹配。
@@ -509,6 +549,26 @@ def search_by_image(img_bytes):
     :return: dict{source_title, source_author, source_url, matches:[{id,title,author,chapter_count}]}；
              识图无结果返回 None（matches 可为空列表=识图成功但禁漫未匹配）
     """
+    # 1. OCR 提取封面文字（标题文字是识别金标准，优先于视觉识图）
+    ocr_texts = _ocr_text(img_bytes)
+    matches, seen = [], set()
+    if ocr_texts:
+        for t in ocr_texts[:6]:
+            for r in (search_album(t, max_count=3) or []):
+                if r['id'] not in seen:
+                    seen.add(r['id'])
+                    matches.append(r)
+            if len(matches) >= 5:
+                break
+        if matches:
+            return {
+                'source_title': ocr_texts[0],
+                'source_author': '',
+                'source_url': '',
+                'matches': matches[:5],
+                'ocr_texts': ocr_texts[:6],
+            }
+    # 2. 视觉识图（SauceNAO + iQDB）兜底
     candidates = []  # (kws, url) 展示候选
     match_candidates = []  # 参与禁漫匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
     for sim, kws, url in _sauce_search(img_bytes):
@@ -542,6 +602,7 @@ def search_by_image(img_bytes):
         'source_author': first_kws[1] if len(first_kws) > 1 else '',
         'source_url': candidates[0][1],
         'matches': matches[:5],
+        'ocr_texts': ocr_texts[:6],
     }
 
 
