@@ -438,6 +438,14 @@ def search_tag_album(tag, max_count=5):
 # SauceNAO 识图 API key（免费注册 https://saucenao.com/user.php；留空则仅用 iqdb 兜底识图）
 SAUCENAO_KEY = os.environ.get('JM_SAUCENAO_KEY', '').strip()
 
+# Google Cloud Vision API key（Web Detection 识图；每月前1000次免费。
+# 获取：console.cloud.google.com → 启用 Cloud Vision API → 凭据 → API 密钥）
+GOOGLE_KEY = os.environ.get('JM_GOOGLE_KEY', '').strip()
+
+# Google Web Detection 的泛词（description 太泛，搜禁漫会命中无关本子，过滤掉）
+GOOGLE_IGNORE = {'manga', 'anime', 'comic', 'hentai', 'doujinshi', '同人誌', '同人志',
+                 '漫画', 'アニメ', 'illustration', 'drawing', 'pixiv'}
+
 
 def _post_stealth(url, files=None, data=None, headers=None, timeout=60):
     """高伪装 POST 回退（curl_cffi 浏览器 TLS 指纹）：requests 被反爬拦截时自动切换。
@@ -497,6 +505,34 @@ def _sauce_search(img_bytes):
             out.append((float(h.get('similarity', 0)), kws,
                         (d.get('ext_urls') or [''])[0]))
         return out
+    except Exception:
+        return []
+
+
+def _google_web_search(img_bytes):
+    """Google Vision Web Detection 识图（需 GOOGLE_KEY，每月前1000次免费）。
+    返回 [(score, keywords)]，keywords 为过滤泛词后的实体描述，失败返回 []"""
+    if not GOOGLE_KEY:
+        return []
+    try:
+        import base64
+        import requests
+        b64 = base64.b64encode(img_bytes).decode()
+        r = requests.post('https://vision.googleapis.com/v1/images:annotate',
+                          params={'key': GOOGLE_KEY},
+                          json={'requests': [{
+                              'image': {'content': b64},
+                              'features': [{'type': 'WEB_DETECTION', 'maxResults': 10}],
+                          }]},
+                          timeout=60)
+        j = r.json()
+        wd = (j.get('responses') or [{}])[0].get('webDetection', {})
+        out = []
+        for e in wd.get('webEntities', []):
+            desc = (e.get('description') or '').strip()
+            if desc and desc.lower() not in GOOGLE_IGNORE:
+                out.append((float(e.get('score', 0)), [desc]))
+        return out[:10]
     except Exception:
         return []
 
@@ -645,7 +681,7 @@ def search_by_image(img_bytes):
                 'matches': matches[:5],
                 'ocr_texts': ocr_texts[:6],
             }
-    # 2. 视觉识图（SauceNAO + iQDB）兜底
+    # 2. 视觉识图（SauceNAO + Google + iQDB）兜底
     candidates = []  # (kws, url) 展示候选
     match_candidates = []  # 参与禁漫匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
     for sim, kws, url in _sauce_search(img_bytes):
@@ -655,6 +691,14 @@ def search_by_image(img_bytes):
             if sim >= 55:
                 match_candidates.append(kws)
             if len(candidates) >= 3:
+                break
+    for score, kws in _google_web_search(img_bytes):
+        # Google webEntities score 为相关度（可>1）；≥1.0 为强匹配才参与禁漫搜索，防泛词误搜
+        if kws and score >= 0.6:
+            candidates.append((kws, ''))
+            if score >= 1.0:
+                match_candidates.append(kws)
+            if len(candidates) >= 5:
                 break
     for title, url in _iqdb_search(img_bytes):
         candidates.append(([title], url))
