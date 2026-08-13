@@ -220,6 +220,14 @@ def test_handle_message_branches():
         msg['message'].append({'type': 'image', 'data': {'url': 'http://fake/1.jpg', 'file': ''}})
         asyncio.run(handle_message(None, fake_api, msg, BOT_QQ))
 
+    def run_img_no_at():
+        """免@图片消息（识图等待窗口测试）"""
+        sent.clear()
+        SEARCH_COOLDOWN.clear()
+        msg = mk_msg('', at=False)
+        msg['message'].append({'type': 'image', 'data': {'url': 'http://fake/1.jpg', 'file': ''}})
+        asyncio.run(handle_message(None, fake_api, msg, BOT_QQ))
+
     # 1. 说明
     run('说明')
     assert len(sent) == 1 and '使用说明' in sent[0][1]['message']
@@ -332,6 +340,26 @@ def test_handle_message_branches():
     jm_niang.search_by_image = lambda b: None
     run_img('识图失败测试')
     assert '识图失败' in sent[-1][1]['message']
+    # 6i. 识图意图：@识图 → 进入等待窗口
+    jm_niang.search_by_image = lambda b: {'source_title': 'T', 'source_author': '',
+                                          'source_url': '', 'matches': [],
+                                          'ocr_texts': ['T']}
+    run('识图')
+    assert '秒内直接发送图片' in sent[-1][1]['message']
+    assert GROUP in jm_niang.IMAGE_WAIT
+    # 6j. 等待窗口内免@发图 → 自动识图
+    jm_niang.IMAGE_WAIT[GROUP] = {'user_id': 999, 'expires': _time.time() + 20}
+    run_img_no_at()
+    joined_wait = '\n'.join(p['message'] for _, p in sent)
+    assert '识图结果' in joined_wait
+    # 6k. 窗口内其他用户发图不触发（user_id 不匹配）
+    jm_niang.IMAGE_WAIT[GROUP] = {'user_id': 888, 'expires': _time.time() + 20}
+    run_img_no_at()
+    assert sent == []  # 无响应
+    # 6l. 窗口过期后发图不触发
+    jm_niang.IMAGE_WAIT[GROUP] = {'user_id': 999, 'expires': _time.time() - 1}
+    run_img_no_at()
+    assert sent == []
     # 7. 无结果关键词文案
     jm_niang.search_album = lambda kw, n=5: []
     run('无此本子')

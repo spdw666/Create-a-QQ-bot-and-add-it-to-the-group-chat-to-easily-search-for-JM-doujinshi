@@ -147,6 +147,7 @@ HELP_TEXT = (
     '📊 排行榜：@我 日榜/周榜/月榜\n'
     '   返回榜单前 5 本（含ID），支持翻页\n\n'
     '🔎 以图搜本：@我 + [发送图片]\n'
+    '   或 @我 识图 → 20秒内直接发图（无需再@）\n'
     '   识图反查本子出处，并尝试在禁漫匹配同款\n\n'
     '❓ 查看说明：@我 说明\n'
     '   （也支持：帮助 / help / 使用说明）\n\n'
@@ -179,6 +180,13 @@ NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
 
 # 重新搜索命令词（@触发：对上次搜索结果不满意时重搜）
 RETRY_WORDS = {'不对', '重新搜', '错了', '重搜', '搜错了', 'retry'}
+
+# 识图意图命令词（@触发：进入 20 秒等待窗口，期间直接发的图自动识图）
+IMAGE_WAIT_WORDS = {'识图', '搜图', '以图搜本', '搜本'}
+
+# 识图等待窗口（group_id -> {user_id, expires}）：@识图后 20 秒内该用户发的图自动识图
+IMAGE_WAIT = {}
+IMAGE_WAIT_SECONDS = 20
 
 # 每群关键词搜索冷却（group_id -> 上次搜索时间戳）
 SEARCH_COOLDOWN = {}
@@ -651,6 +659,47 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         })
 
 
+async def handle_image_search(api, group_id, images):
+    """识图处理：取图 → search_by_image → 缓存状态 → 回复（@+图 与 等待窗口 两处共用）"""
+    if search_cooldown_hit(group_id):
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '⏳ 识图太快啦，等几秒再试试～'
+        })
+        return
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': '🔍 正在识图搜本，稍等…'
+    })
+    img_bytes = await fetch_image_with_api(api, images[0])
+    if not img_bytes:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '❌ 图片获取失败，请重发一次（或检查图片是否已过期）'
+        })
+        return
+    result = await asyncio.to_thread(search_by_image, img_bytes)
+    if result is None:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '❌ 识图失败：图源未被识图引擎收录\n'
+                       '（SauceNAO/iQDB 对部分本子封面无收录，试试发更清晰的原图）'
+        })
+        return
+    # 缓存最近一张图到搜索状态：@不对 时用同一张图重新识图
+    now = time.time()
+    for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
+        SEARCH_STATE.pop(gid, None)
+    SEARCH_STATE[group_id] = {
+        'kind': 'image', 'keyword': '', 'img_bytes': img_bytes,
+        'head': '🔍 识图', 'results': [], 'page': 1, 'ts': now,
+    }
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': render_image_result(result)
+    })
+
+
 async def handle_message(ws, api, msg, bot_qq):
     """处理一条消息事件"""
     if msg.get('message_type') != 'group':
@@ -670,6 +719,16 @@ async def handle_message(ws, api, msg, bot_qq):
     # 必须 @机器人 才响应
     at_me, text = parse_group_message(msg, bot_qq)
     if not at_me:
+        # 识图等待窗口：@过「识图」后 20 秒内，该用户直接发的图自动识图
+        wait = IMAGE_WAIT.get(group_id)
+        if wait and time.time() < wait['expires'] and str(wait['user_id']) == str(user_id):
+            images = extract_images(msg)
+            if images:
+                IMAGE_WAIT.pop(group_id, None)
+                await handle_image_search(api, group_id, images)
+                return
+        elif wait:
+            IMAGE_WAIT.pop(group_id, None)  # 过期清理
         # 翻页/跳页命令免@：直接发「下一页」或「第N页」，无需先@机器人；无状态则静默
         page_num = extract_page(text) if text else None
         if text and (text.lower() in NEXT_WORDS or page_num):
@@ -974,47 +1033,20 @@ async def handle_message(ws, api, msg, bot_qq):
             await handle_jm_request(ws, api, group_id, user_id, album_id)
         return
 
+    # 识图意图：@机器人 + 识图/搜图 → 进入20秒等待窗口，期间直接发图即可
+    if text.lower() in IMAGE_WAIT_WORDS:
+        IMAGE_WAIT[group_id] = {'user_id': user_id, 'expires': time.time() + IMAGE_WAIT_SECONDS}
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'📸 请在 {IMAGE_WAIT_SECONDS} 秒内直接发送图片（无需再@我）'
+        })
+        return
+
     # 以图搜本：@机器人 + [图片]（text 为空但带图）
     images = extract_images(msg)
     if images:
         log(f'识图请求: url={images[0]["url"][:100]!r} file={images[0]["file"][:80]!r}')
-        if search_cooldown_hit(group_id):
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': '⏳ 识图太快啦，等几秒再试试～'
-            })
-            return
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': '🔍 正在识图搜本，稍等…'
-        })
-        img_bytes = await fetch_image_with_api(api, images[0])
-        if not img_bytes:
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': '❌ 图片获取失败，请重发一次（或检查图片是否已过期）'
-            })
-            return
-        result = await asyncio.to_thread(search_by_image, img_bytes)
-        if result is None:
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': '❌ 识图失败：图源未被识图引擎收录\n'
-                           '（SauceNAO/iQDB 对部分本子封面无收录，试试发更清晰的原图）'
-            })
-            return
-        # 缓存最近一张图到搜索状态：@不对 时用同一张图重新识图
-        now = time.time()
-        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-            SEARCH_STATE.pop(gid, None)
-        SEARCH_STATE[group_id] = {
-            'kind': 'image', 'keyword': '', 'img_bytes': img_bytes,
-            'head': '🔍 识图', 'results': [], 'page': 1, 'ts': now,
-        }
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': render_image_result(result)
-        })
+        await handle_image_search(api, group_id, images)
         return
 
     # 关键词搜索：@机器人 + 关键词 → 返回前5本（ID列表）
