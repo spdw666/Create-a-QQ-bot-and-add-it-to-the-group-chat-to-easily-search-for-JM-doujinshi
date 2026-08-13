@@ -420,6 +420,27 @@ def search_author_album(author, max_count=5):
     return results[:max_count] if results else results
 
 
+# 今日属性标签池（随机抽一个标签，搜该标签随机附赠一本）
+FUN_TAGS = ['NTR', '纯爱', '人妻', '女仆', '百合', '触手', '后宫', '制服', '催眠', '调教', '姐弟', '母女', '痴女', '寝取']
+
+
+def get_random_tag_album():
+    """
+    今日属性：从标签池随机挑一个标签，搜索该标签并随机返回一本。
+
+    :return: dict{tag, id, title, author, chapter_count}；连续3次失败返回 None
+    """
+    import random
+
+    for _ in range(3):
+        tag = random.choice(FUN_TAGS)
+        results = search_album(tag, max_count=5)
+        if results:
+            album = random.choice(results)
+            return {'tag': tag, **album}
+    return None
+
+
 def cancel_download(album_id, work_dir=None):
     """
     标记取消下载并删除已下载的缓存目录。

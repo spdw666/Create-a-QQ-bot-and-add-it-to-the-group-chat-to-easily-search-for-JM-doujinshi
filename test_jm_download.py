@@ -269,6 +269,20 @@ def test_handle_message_branches():
     run('随机')
     joined6 = '\n'.join(p['message'] for _, p in sent)
     assert '随机推荐' in joined6 and 'ID：123456' in joined6
+    # 6b. 今日属性：@原用户 + 属性 + 附赠本子
+    jm_niang.get_random_tag_album = lambda: {'tag': 'NTR', 'id': '654321',
+                                             'title': '属性本', 'author': '作者B',
+                                             'chapter_count': 2}
+    run('今日属性')
+    joined_tag = '\n'.join(p['message'] for _, p in sent)
+    assert '[CQ:at,qq=999]' in joined_tag  # @原请求用户
+    assert '今日你的属性是【NTR】' in joined_tag
+    assert 'ID：654321' in joined_tag
+    assert '《属性本》' in joined_tag
+    # 6c. 今日属性失败提示
+    jm_niang.get_random_tag_album = lambda: None
+    run('今日属性')
+    assert '占卜失败' in sent[-1][1]['message']
     # 7. 无结果关键词文案
     jm_niang.search_album = lambda kw, n=5: []
     run('无此本子')

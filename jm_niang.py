@@ -27,6 +27,7 @@ from jm_download import (
     find_cached_zip,
     get_album_info,
     get_random_hot_album,
+    get_random_tag_album,
     search_album,
     search_author_album,
     count_images,
@@ -127,6 +128,9 @@ HELP_TEXT = (
     '🎲 随机推荐：@我 随机\n'
     '   （也支持：抽一本 / 推荐 / 来一本）\n'
     '   从近30天最火的本子里随机抽一本推荐\n\n'
+    '🎭 今日属性：@我 今日属性\n'
+    '   随机占卜你的今日属性（NTR/纯爱等标签）\n'
+    '   并附赠一本对应标签的本子（含ID）\n\n'
     '🔍 搜索：@我 + 关键词/本子名\n'
     '   例：@JM娘 人妻、@JM娘 枫与铃、@JM娘 琉璃川\n'
     '   返回最新 5 本（含ID）；自动匹配简体/繁体/日文写法\n'
@@ -153,6 +157,9 @@ CANCEL_WORDS = {'取消', '停止', 'stop', 'cancel', '算了'}
 
 # 随机推荐类命令词
 RANDOM_WORDS = {'随机', '抽一本', '推荐', '来一本', '随缘', 'random'}
+
+# 今日属性命令词
+TAG_WORDS = {'今日属性', '属性', 'today'}
 
 # 翻页命令词（支持免@：用户直接发「下一页」即可翻页；'继续'等宽泛词不收录，防普通聊天误触发）
 NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
@@ -572,6 +579,36 @@ async def handle_message(ws, api, msg, bot_qq):
                        f'📚 共 {info["chapter_count"]} 章\n'
                        f'🔢 ID：{info["id"]}\n'
                        f'📎 https://18comic.vip/album/{info["id"]}\n'
+                       f'想要？@我 + 发送这个ID 即可打包下载'
+        })
+        return
+
+    # 今日属性：@机器人 + 今日属性 → @原用户 随机属性 + 附赠对应标签本子
+    if text.lower() in TAG_WORDS:
+        if search_cooldown_hit(group_id):
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '⏳ 占卜太快啦，等几秒再试试～'
+            })
+            return
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '🎭 正在为你占卜今日属性，稍等…'
+        })
+        info = await asyncio.to_thread(get_random_tag_album)
+        if not info:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '❌ 占卜失败（网络波动或禁漫拦截），稍后再试试～'
+            })
+            return
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'[CQ:at,qq={user_id}] 🎭 今日你的属性是【{escape_cq(info["tag"])}】！\n'
+                       f'📕 附赠一本「{escape_cq(info["tag"])}」本子：\n'
+                       f'《{escape_cq(info["title"])}》\n'
+                       f'✍️ 作者：{escape_cq(info["author"])}  章节：{info["chapter_count"]}章\n'
+                       f'🔢 ID：{info["id"]}\n'
                        f'想要？@我 + 发送这个ID 即可打包下载'
         })
         return

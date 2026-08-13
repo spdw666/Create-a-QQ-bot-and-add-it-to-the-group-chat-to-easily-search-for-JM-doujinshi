@@ -19,6 +19,7 @@ A Python QQ group bot (**JM娘**) that lets group members search and download do
 | `@bot <关键词/名称>` | 搜索并返回最新 **5 本（含ID）**，支持翻页 | Searches and returns the latest **5 results with IDs** (paginated) |
 | `@bot 作者 <作者名>` | 按**作者**搜索，返回 5 本（含ID） | Searches by **author** and returns 5 results with IDs |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random recommendation from the hottest albums of the last 30 days |
+| `@bot 今日属性` | 随机占卜你的今日属性（NTR/纯爱等标签），@原用户并附赠一本对应标签的本子 | Random daily "attribute" fortune (NTR / pure-love / etc.), mentions the requester and gifts a matching album |
 | `@bot 下一页` | 查看上一页；**直接发「下一页」翻页、「第N页」跳页（均无需@机器人）** | Next page of the last search; **just send `下一页` to page or `第N页` to jump (no mention needed)** |
 | `@bot 取消` | 取消正在进行的下载 | Cancels the in-progress download |
 | `@bot 说明` | 查看使用说明 | Shows the help text |
