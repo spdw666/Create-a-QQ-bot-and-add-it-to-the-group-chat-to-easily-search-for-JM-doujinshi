@@ -542,6 +542,49 @@ def _ocr_text(img_bytes):
         return []
 
 
+# 视觉大模型配置（内页图识别：画面描述 → 标签搜索；SiliconFlow OpenAI 兼容 API）
+LLM_API_KEY = os.environ.get('JM_LLM_KEY', '').strip()
+LLM_API_URL = 'https://api.siliconflow.cn/v1/chat/completions'
+LLM_MODEL = 'Qwen/Qwen2.5-VL-7B-Instruct'
+
+# 视觉大模型的候选标签（与今日属性标签池一致，便于搜禁漫 tag）
+LLM_TAGS = ('NTR、纯爱、人妻、女仆、百合、触手、后宫、制服、催眠、调教、姐弟、母女、痴女、'
+            '巨乳、贫乳、熟女、辣妹、黑丝、白丝、露出、泳装、兔女郎、巫女、护士、OL、教师、'
+            '学生、猫娘、魅魔、精灵、兽耳、异世界、时间停止')
+
+
+def _llm_describe(img_bytes):
+    """视觉大模型描述漫画内页，返回搜索词列表（标签/特征/画面文字）。无 key 或失败返回 []"""
+    if not LLM_API_KEY:
+        return []
+    import base64
+    try:
+        import requests
+        b64 = base64.b64encode(img_bytes).decode()
+        prompt = ('这是一张成人漫画的内页。请观察画面并输出：\n'
+                  f'1. 题材标签：从以下范围挑选 2-4 个最贴切的（只输出词）：{LLM_TAGS}\n'
+                  '2. 画面中的角色特征词 2-3 个（如：黑发双马尾、兔女郎装、教室）\n'
+                  '3. 如果画面中有可读文字，原样输出\n'
+                  '只输出结果，各项用逗号分隔，不要任何解释。')
+        r = requests.post(LLM_API_URL,
+                          headers={'Authorization': f'Bearer {LLM_API_KEY}',
+                                   'Content-Type': 'application/json'},
+                          json={'model': LLM_MODEL,
+                                'messages': [{'role': 'user', 'content': [
+                                    {'type': 'image_url',
+                                     'image_url': {'url': f'data:image/jpeg;base64,{b64}'}},
+                                    {'type': 'text', 'text': prompt},
+                                ]}],
+                                'max_tokens': 300},
+                          timeout=120)
+        j = r.json()
+        text = j.get('choices', [{}])[0].get('message', {}).get('content', '') or ''
+        words = [w.strip() for w in re.split(r'[,，、\n]+', text) if w.strip()]
+        return words[:8]
+    except Exception:
+        return []
+
+
 def search_by_image(img_bytes):
     """
     以图搜本：SauceNAO（需 JM_SAUCENAO_KEY）+ iqdb 兜底识图，用识图标题/作者去禁漫搜索匹配。
@@ -585,6 +628,25 @@ def search_by_image(img_bytes):
         if len(candidates) >= 5:
             break
     if not candidates:
+        # 3. 视觉大模型兜底：内页图 OCR/视觉识图都失败时，AI 描述画面 → 标签搜索
+        llm_words = _llm_describe(img_bytes)
+        matches, seen = [], set()
+        for kw in llm_words[:6]:
+            for r in (search_album(kw, max_count=3) or []):
+                if r['id'] not in seen:
+                    seen.add(r['id'])
+                    matches.append(r)
+            if len(matches) >= 5:
+                break
+        if llm_words:
+            return {
+                'source_title': llm_words[0],
+                'source_author': '',
+                'source_url': '',
+                'matches': matches[:5],
+                'ocr_texts': ocr_texts[:6],
+                'llm_words': llm_words[:6],
+            }
         return None
     # 识图关键词 → 禁漫搜索（四层变体自动生效）
     matches, seen = [], set()

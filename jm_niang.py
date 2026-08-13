@@ -908,6 +908,8 @@ async def handle_message(ws, api, msg, bot_qq):
         lines = ['🔍 识图结果：']
         if result.get('ocr_texts'):
             lines.append(f'🔤 封面文字：{" / ".join(escape_cq(t) for t in result["ocr_texts"])}')
+        if result.get('llm_words'):
+            lines.append(f'🤖 AI 识别：{" / ".join(escape_cq(t) for t in result["llm_words"])}')
         if result['source_title']:
             lines.append(f'📕 来源：《{escape_cq(result["source_title"][:60])}》')
         if result['source_author']:
