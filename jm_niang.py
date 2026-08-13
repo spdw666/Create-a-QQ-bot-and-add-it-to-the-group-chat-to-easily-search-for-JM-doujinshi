@@ -177,6 +177,9 @@ RANK_WORDS = {'日榜', '周榜', '月榜', 'day', 'week', 'month'}
 # 翻页命令词（支持免@：用户直接发「下一页」即可翻页；'继续'等宽泛词不收录，防普通聊天误触发）
 NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
 
+# 重新搜索命令词（@触发：对上次搜索结果不满意时重搜）
+RETRY_WORDS = {'不对', '重新搜', '错了', '重搜', '搜错了', 'retry'}
+
 # 每群关键词搜索冷却（group_id -> 上次搜索时间戳）
 SEARCH_COOLDOWN = {}
 
@@ -768,6 +771,7 @@ async def handle_message(ws, api, msg, bot_qq):
         SEARCH_STATE[group_id] = {
             'head': f'📊 {escape_cq(text)}',
             'results': results, 'page': 1, 'ts': now,
+            'kind': 'rank', 'keyword': rank_type,
         }
         await api('send_group_msg', {
             'group_id': group_id,
@@ -807,6 +811,7 @@ async def handle_message(ws, api, msg, bot_qq):
         SEARCH_STATE[group_id] = {
             'head': f'🏷️ 标签「{escape_cq(tag)}」的本子',
             'results': results, 'page': 1, 'ts': now,
+            'kind': 'tag', 'keyword': tag,
         }
         await api('send_group_msg', {
             'group_id': group_id,
@@ -818,6 +823,53 @@ async def handle_message(ws, api, msg, bot_qq):
     page_num = extract_page(text)
     if text.lower() in NEXT_WORDS or page_num:
         await handle_next_page(api, group_id, page=page_num)
+        return
+
+    # 重新搜索：@机器人 + 不对/错了/重新搜 → 重跑上一次搜索
+    if text.lower() in RETRY_WORDS:
+        state = SEARCH_STATE.get(group_id)
+        if not state or time.time() - state['ts'] > SEARCH_STATE_TTL:
+            SEARCH_STATE.pop(group_id, None)
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '📄 没有可重新搜索的记录（请先搜索一次）'
+            })
+            return
+        kind = state.get('kind', 'search')
+        keyword = state.get('keyword', '')
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'🔁 正在重新搜索，稍等…'
+        })
+        if kind == 'search':
+            results = await asyncio.to_thread(search_album, keyword, 200)
+        elif kind == 'author':
+            results = await asyncio.to_thread(search_author_album, keyword, 200)
+        elif kind == 'tag':
+            results = await asyncio.to_thread(search_tag_album, keyword, 200)
+        elif kind == 'rank':
+            results = await asyncio.to_thread(get_ranking, keyword)
+        else:
+            results = None
+        if results is None:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '❌ 重新搜索失败（网络波动或禁漫拦截），稍后再试试～'
+            })
+            return
+        if not results:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '没有找到该关键词所对应的本子'
+            })
+            return
+        state['results'] = results
+        state['page'] = 1
+        state['ts'] = time.time()
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': render_search_page(state, 1)
+        })
         return
 
     # 作者搜索：@机器人 + 作者 + 名字 → 该作者的本子
@@ -853,6 +905,7 @@ async def handle_message(ws, api, msg, bot_qq):
         SEARCH_STATE[group_id] = {
             'head': f'✍️ 作者「{escape_cq(author)}」的本子',
             'results': results, 'page': 1, 'ts': now,
+            'kind': 'author', 'keyword': author,
         }
         await api('send_group_msg', {
             'group_id': group_id,
@@ -965,6 +1018,7 @@ async def handle_message(ws, api, msg, bot_qq):
         SEARCH_STATE[group_id] = {
             'head': f'🔍 关键词「{escape_cq(keyword)}」',
             'results': results, 'page': 1, 'ts': now,
+            'kind': 'search', 'keyword': keyword,
         }
         await api('send_group_msg', {
             'group_id': group_id,

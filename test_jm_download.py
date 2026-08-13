@@ -336,3 +336,20 @@ def test_handle_message_branches():
     jm_niang.search_album = lambda kw, n=5: []
     run('无此本子')
     assert sent[-1][1]['message'] == '没有找到该关键词所对应的本子'
+    # 8. 重新搜索：@不对 → 重跑上次搜索（mock 计数验证 search_album 被再次调用）
+    call_count = [0]
+    def counted_search(kw, n=5):
+        call_count[0] += 1
+        return [{'title': f'重搜{kw}{i}', 'chapter_count': 1,
+                 'id': str(500000 + i), 'author': 'a'} for i in range(2)]
+    jm_niang.search_album = counted_search
+    run('人妻')
+    assert call_count[0] == 1
+    run('不对')
+    joined_retry = '\n'.join(p['message'] for _, p in sent)
+    assert call_count[0] == 2  # 重搜触发了第二次搜索
+    assert '重新搜索' in joined_retry and 'ID：500000' in joined_retry
+    # 9. 无状态时重搜 → 提示无记录
+    SEARCH_STATE.pop(GROUP, None)
+    run('错了')
+    assert '没有可重新搜索的记录' in sent[0][1]['message']
