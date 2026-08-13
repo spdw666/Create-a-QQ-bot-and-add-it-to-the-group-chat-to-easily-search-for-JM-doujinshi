@@ -439,17 +439,46 @@ def search_tag_album(tag, max_count=5):
 SAUCENAO_KEY = os.environ.get('JM_SAUCENAO_KEY', '').strip()
 
 
+def _post_stealth(url, files=None, data=None, headers=None, timeout=60):
+    """高伪装 POST 回退（curl_cffi 浏览器 TLS 指纹）：requests 被反爬拦截时自动切换。
+    兼容 curl_cffi 新旧版（旧版 files=，新版 CurlMime multipart）。返回 Response 或 None"""
+    try:
+        from curl_cffi.requests import Session
+        session = Session(impersonate='chrome')
+        kwargs = {'timeout': timeout}
+        if data:
+            kwargs['data'] = data
+        if headers:
+            kwargs['headers'] = headers
+        if files:
+            try:
+                return session.post(url, files=files, **kwargs)
+            except NotImplementedError:  # curl_cffi >= 0.16 废除 files，改用 CurlMime
+                from curl_cffi.curl import CurlMime
+                mime = CurlMime()
+                for name, (fname, content, ctype) in files.items():
+                    mime.addpart(name=name, filename=fname, data=content, content_type=ctype)
+                return session.post(url, multipart=mime, **kwargs)
+        return session.post(url, **kwargs)
+    except Exception:
+        return None
+
+
 def _sauce_search(img_bytes):
     """SauceNAO 识图（需 SAUCENAO_KEY）。返回 [(similarity, keywords, url)]，失败返回 []"""
     if not SAUCENAO_KEY:
         return []
+    files = {'file': ('img.jpg', img_bytes)}
+    data = {'db': 999, 'output_type': 2, 'numres': 5, 'api_key': SAUCENAO_KEY}
     try:
         import requests
         r = requests.post('https://saucenao.com/search.php',
-                          files={'file': ('img.jpg', img_bytes)},
-                          data={'db': 999, 'output_type': 2, 'numres': 5,
-                                'api_key': SAUCENAO_KEY},
-                          timeout=60)
+                          files=files, data=data, timeout=60)
+    except Exception:
+        r = _post_stealth('https://saucenao.com/search.php', files=files, data=data)
+    if r is None:
+        return []
+    try:
         j = r.json()
         if j.get('header', {}).get('status') != 0:
             return []
@@ -474,11 +503,16 @@ def _sauce_search(img_bytes):
 
 def _iqdb_search(img_bytes):
     """iqdb 识图（无需 key，doujinshi 覆盖一般，作兜底）。返回 [(title, url)]，失败返回 []"""
+    files = {'file': ('img.jpg', img_bytes, 'image/jpeg')}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
         import requests
-        r = requests.post('https://iqdb.org/', files={'file': ('img.jpg', img_bytes)},
-                          headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
-                          timeout=90)
+        r = requests.post('https://iqdb.org/', files=files, headers=headers, timeout=60)
+    except Exception:
+        r = _post_stealth('https://iqdb.org/', files=files, headers=headers, timeout=60)
+    if r is None:
+        return []
+    try:
         html = r.text
         out = []
         # iqdb 结果行：<tr> 含 matchThumb（最佳匹配）/ additional match 标记，行内有外部站点链接
@@ -576,7 +610,7 @@ def _llm_describe(img_bytes):
                                     {'type': 'text', 'text': prompt},
                                 ]}],
                                 'max_tokens': 300},
-                          timeout=120)
+                          timeout=60)
         j = r.json()
         text = j.get('choices', [{}])[0].get('message', {}).get('content', '') or ''
         words = [w.strip() for w in re.split(r'[,，、\n]+', text) if w.strip()]

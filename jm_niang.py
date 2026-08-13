@@ -659,6 +659,12 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         })
 
 
+async def _search_image_with_timeout(img_bytes, timeout=60):
+    """识图总超时：60 秒内没结果就放弃（用户要求：识图太慢就放弃）"""
+    return await asyncio.wait_for(
+        asyncio.to_thread(search_by_image, img_bytes), timeout=timeout)
+
+
 async def handle_image_search(api, group_id, images):
     """识图处理：取图 → search_by_image → 缓存状态 → 回复（@+图 与 等待窗口 两处共用）"""
     if search_cooldown_hit(group_id):
@@ -678,7 +684,14 @@ async def handle_image_search(api, group_id, images):
             'message': '❌ 图片获取失败，请重发一次（或检查图片是否已过期）'
         })
         return
-    result = await asyncio.to_thread(search_by_image, img_bytes)
+    try:
+        result = await _search_image_with_timeout(img_bytes)
+    except asyncio.TimeoutError:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '⏱️ 识图超过1分钟，已放弃。稍后再试试，或换一张更清晰的图～'
+        })
+        return
     if result is None:
         await api('send_group_msg', {
             'group_id': group_id,
@@ -932,7 +945,14 @@ async def handle_message(ws, api, msg, bot_qq):
                     'message': '❌ 图片已过期，请重新发图'
                 })
                 return
-            result = await asyncio.to_thread(search_by_image, img_bytes)
+            try:
+                result = await _search_image_with_timeout(img_bytes)
+            except asyncio.TimeoutError:
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': '⏱️ 重新识图超过1分钟，已放弃。稍后再试试～'
+                })
+                return
             if result is None:
                 await api('send_group_msg', {
                     'group_id': group_id,
