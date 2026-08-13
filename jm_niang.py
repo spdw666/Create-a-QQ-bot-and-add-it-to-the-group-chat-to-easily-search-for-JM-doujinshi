@@ -32,6 +32,7 @@ from jm_download import (
     search_author_album,
     search_tag_album,
     get_ranking,
+    search_by_image,
     count_images,
     cleanup_old_dirs,
     cancel_download,
@@ -145,6 +146,8 @@ HELP_TEXT = (
     '   返回该标签最新的 5 本（含ID），支持翻页\n\n'
     '📊 排行榜：@我 日榜/周榜/月榜\n'
     '   返回榜单前 5 本（含ID），支持翻页\n\n'
+    '🔎 以图搜本：@我 + [发送图片]\n'
+    '   识图反查本子出处，并尝试在禁漫匹配同款\n\n'
     '❓ 查看说明：@我 说明\n'
     '   （也支持：帮助 / help / 使用说明）\n\n'
     '⚠️ 温馨提示\n'
@@ -341,6 +344,35 @@ def extract_tag(text: str):
         if low.startswith(prefix):
             rest = text[len(prefix):].strip(' :：、,，')
             return rest or None
+    return None
+
+
+def extract_images(msg):
+    """提取消息中的图片段（url 优先，file 本地路径兜底）"""
+    out = []
+    for seg in msg.get('message') or []:
+        if seg.get('type') == 'image':
+            d = seg.get('data', {})
+            out.append({'url': d.get('url', ''), 'file': d.get('file', '')})
+    return out
+
+
+def fetch_image_bytes(img_ref):
+    """下载图片：先试 url（QQ CDN），失败读 file 本地路径（与 NapCat 同机时可用）"""
+    import requests
+    url = img_ref.get('url') or ''
+    if url.startswith('http'):
+        try:
+            return requests.get(url, timeout=30).content
+        except Exception:
+            pass
+    path = img_ref.get('file') or ''
+    if path and os.path.isfile(path):
+        try:
+            with open(path, 'rb') as f:
+                return f.read()
+        except Exception:
+            pass
     return None
 
 
@@ -774,6 +806,55 @@ async def handle_message(ws, api, msg, bot_qq):
 
         async with SEMAPHORE:
             await handle_jm_request(ws, api, group_id, user_id, album_id)
+        return
+
+    # 以图搜本：@机器人 + [图片]（text 为空但带图）
+    images = extract_images(msg)
+    if images:
+        if search_cooldown_hit(group_id):
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '⏳ 识图太快啦，等几秒再试试～'
+            })
+            return
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '🔍 正在识图搜本，稍等…'
+        })
+        img_bytes = await asyncio.to_thread(fetch_image_bytes, images[0])
+        if not img_bytes:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '❌ 图片获取失败，请重发一次（或检查图片是否已过期）'
+            })
+            return
+        result = await asyncio.to_thread(search_by_image, img_bytes)
+        if result is None:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '❌ 识图失败：图源未被识图引擎收录\n'
+                           '（SauceNAO/iQDB 对部分本子封面无收录，试试发更清晰的原图）'
+            })
+            return
+        lines = ['🔍 识图结果：']
+        if result['source_title']:
+            lines.append(f'📕 来源：《{escape_cq(result["source_title"][:60])}》')
+        if result['source_author']:
+            lines.append(f'✍️ 作者：{escape_cq(result["source_author"])}')
+        if result['source_url']:
+            lines.append(f'🔗 {escape_cq(result["source_url"])}')
+        if result['matches']:
+            lines.append(f'📚 禁漫匹配到 {len(result["matches"])} 本：')
+            for i, r in enumerate(result['matches'], 1):
+                lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
+                             f'   🔢 ID：{r["id"]}')
+            lines.append('想要下载？@我 + 发送对应的ID')
+        else:
+            lines.append('⚠️ 禁漫未搜到同款本子')
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '\n'.join(lines)
+        })
         return
 
     # 关键词搜索：@机器人 + 关键词 → 返回前5本（ID列表）

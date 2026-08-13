@@ -53,6 +53,7 @@
 | `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
 | `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
 | `@bot 日榜/周榜/月榜` | 查看排行榜前 5（支持翻页） | Daily / weekly / monthly ranking top 5 (paginated) |
+| `@bot <图片>` | 以图搜本：识图反查出处并尝试在禁漫匹配同款（SauceNAO + iQDB） | Reverse image search: identify the source and try to match the album on the site (SauceNAO + iQDB) |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random pick from the hottest albums of the last 30 days |
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本 | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
@@ -197,6 +198,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_ZIP_PASSWORD` | ✅ | 上传 ZIP 的 AES 密码（需告知用户）。AES password for uploaded ZIPs. |
 | `JM_PUBLIC_IP` | ✅ | 服务器公网 IP/域名，用于生成浏览器下载链接。Public IP/host used to build download links. |
 | `JM_PROXY` | ❌ | 可选 HTTP 代理（如 `http://127.0.0.1:7890`；留空 = 直连）。Optional HTTP proxy (empty = direct). |
+| `JM_SAUCENAO_KEY` | ❌ | SauceNAO 识图 API key（免费注册 https://saucenao.com/user.php；未填时以图搜本仅用 iQDB 兜底）。Optional SauceNAO API key for reverse image search (free; without it only iQDB is used). |
 
 ## 测试 Tests
 

@@ -435,6 +435,106 @@ def search_tag_album(tag, max_count=5):
     return results[:max_count] if results else results
 
 
+# SauceNAO 识图 API key（免费注册 https://saucenao.com/user.php；留空则仅用 iqdb 兜底识图）
+SAUCENAO_KEY = os.environ.get('JM_SAUCENAO_KEY', '').strip()
+
+
+def _sauce_search(img_bytes):
+    """SauceNAO 识图（需 SAUCENAO_KEY）。返回 [(similarity, title, member, source, url)]，失败返回 []"""
+    if not SAUCENAO_KEY:
+        return []
+    try:
+        import requests
+        r = requests.post('https://saucenao.com/search.php',
+                          files={'file': ('img.jpg', img_bytes)},
+                          data={'db': 999, 'output_type': 2, 'numres': 3,
+                                'api_key': SAUCENAO_KEY},
+                          timeout=60)
+        j = r.json()
+        if j.get('header', {}).get('status') != 0:
+            return []
+        out = []
+        for res in j.get('results', []):
+            h, d = res.get('header', {}), res.get('data', {})
+            out.append((float(h.get('similarity', 0)), d.get('title') or '',
+                        d.get('member_name') or '', d.get('source') or '',
+                        (d.get('ext_urls') or [''])[0]))
+        return out
+    except Exception:
+        return []
+
+
+def _iqdb_search(img_bytes):
+    """iqdb 识图（无需 key，doujinshi 覆盖一般，作兜底）。返回 [(title, url)]，失败返回 []"""
+    try:
+        import requests
+        r = requests.post('https://iqdb.org/', files={'file': ('img.jpg', img_bytes)},
+                          headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
+                          timeout=90)
+        html = r.text
+        out = []
+        # iqdb 结果行：<tr> 含 matchThumb（最佳匹配）/ additional match 标记，行内有外部站点链接
+        for m in re.finditer(r'<tr[^>]*>.*?</tr>', html, re.S):
+            row = m.group(0)
+            low = row.lower()
+            if 'matchthumb' not in low and 'additional match' not in low:
+                continue
+            a = re.search(r'<a href="(https?://[^"]+)"[^>]*class="[^"]*external', row) or \
+                re.search(r'<a href="(https?://[^"]+)"', row)
+            url = a.group(1) if a else ''
+            if not url or 'iqdb' in url:
+                continue
+            title = re.sub(r'<[^>]+>', ' ', row)
+            title = re.sub(r'\s+', ' ', title).strip()
+            out.append((title[:150], url))
+            if len(out) >= 3:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def search_by_image(img_bytes):
+    """
+    以图搜本：SauceNAO（需 JM_SAUCENAO_KEY）+ iqdb 兜底识图，用识图标题/作者去禁漫搜索匹配。
+
+    :return: dict{source_title, source_author, source_url, matches:[{id,title,author,chapter_count}]}；
+             识图无结果返回 None（matches 可为空列表=识图成功但禁漫未匹配）
+    """
+    candidates = []  # (title, member, url)
+    for sim, title, member, _src, url in _sauce_search(img_bytes):
+        if sim >= 70:
+            candidates.append((title, member, url))
+            if len(candidates) >= 3:
+                break
+    for title, url in _iqdb_search(img_bytes):
+        candidates.append((title, '', url))
+        if len(candidates) >= 5:
+            break
+    if not candidates:
+        return None
+    # 识图标题/作者 → 禁漫搜索（四层变体自动生效）
+    matches, seen = [], set()
+    for title, member, _url in candidates[:5]:
+        for r in (search_album(title, max_count=3) or []):
+            if r['id'] not in seen:
+                seen.add(r['id'])
+                matches.append(r)
+        if member:
+            for r in (search_author_album(member, 3) or []):
+                if r['id'] not in seen:
+                    seen.add(r['id'])
+                    matches.append(r)
+        if len(matches) >= 5:
+            break
+    return {
+        'source_title': candidates[0][0],
+        'source_author': candidates[0][1],
+        'source_url': candidates[0][2],
+        'matches': matches[:5],
+    }
+
+
 # 排行榜 API 映射（jmcomic 原生支持，返回 JmSearchPage 与搜索同构）
 RANK_METHODS = {'day': 'day_ranking', 'week': 'week_ranking', 'month': 'month_ranking'}
 

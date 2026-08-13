@@ -212,6 +212,14 @@ def test_handle_message_branches():
         SEARCH_COOLDOWN.clear()
         asyncio.run(handle_message(None, fake_api, mk_msg(text, at=False), BOT_QQ))
 
+    def run_img(text):
+        """@机器人 + 图片段消息（以图搜本）"""
+        sent.clear()
+        SEARCH_COOLDOWN.clear()
+        msg = mk_msg(text)
+        msg['message'].append({'type': 'image', 'data': {'url': 'http://fake/1.jpg', 'file': ''}})
+        asyncio.run(handle_message(None, fake_api, msg, BOT_QQ))
+
     # 1. 说明
     run('说明')
     assert len(sent) == 1 and '使用说明' in sent[0][1]['message']
@@ -311,6 +319,19 @@ def test_handle_message_branches():
     run('日榜')
     joined_rank = '\n'.join(p['message'] for _, p in sent)
     assert '日榜' in joined_rank and '第 1/2 页' in joined_rank and 'ID：400000' in joined_rank
+    # 6g. 以图搜本：@机器人 + 图片 → 识图回复含来源与禁漫匹配
+    jm_niang.fetch_image_bytes = lambda ref: b'fake-img'
+    jm_niang.search_by_image = lambda b: {'source_title': '楓と鈴', 'source_author': 'きょくちょ',
+                                          'source_url': 'https://example.com/1',
+                                          'matches': [{'title': '楓と鈴 (全)', 'chapter_count': 1,
+                                                       'id': '1235379', 'author': 'きょくちょ'}]}
+    run_img('以图搜本测试')
+    joined_img = '\n'.join(p['message'] for _, p in sent)
+    assert '识图结果' in joined_img and '楓と鈴' in joined_img and 'ID：1235379' in joined_img
+    # 6h. 识图失败提示
+    jm_niang.search_by_image = lambda b: None
+    run_img('识图失败测试')
+    assert '识图失败' in sent[-1][1]['message']
     # 7. 无结果关键词文案
     jm_niang.search_album = lambda kw, n=5: []
     run('无此本子')
