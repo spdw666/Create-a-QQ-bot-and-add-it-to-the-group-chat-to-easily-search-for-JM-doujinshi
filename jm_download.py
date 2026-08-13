@@ -501,21 +501,26 @@ def search_by_image(img_bytes):
     :return: dict{source_title, source_author, source_url, matches:[{id,title,author,chapter_count}]}；
              识图无结果返回 None（matches 可为空列表=识图成功但禁漫未匹配）
     """
-    candidates = []  # (title, member, url)
+    candidates = []  # (title, member, url) 全部展示候选
+    match_candidates = []  # 参与禁漫匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
     for sim, title, member, _src, url in _sauce_search(img_bytes):
-        if sim >= 70:
+        # doujinshi 封面经裁剪/压缩/加水印后相似度普遍 40-60%，≥40 纳入展示
+        if sim >= 40:
             candidates.append((title, member, url))
+            if sim >= 55:
+                match_candidates.append((title, member))
             if len(candidates) >= 3:
                 break
     for title, url in _iqdb_search(img_bytes):
         candidates.append((title, '', url))
+        match_candidates.append((title, ''))
         if len(candidates) >= 5:
             break
     if not candidates:
         return None
     # 识图标题/作者 → 禁漫搜索（四层变体自动生效）
     matches, seen = [], set()
-    for title, member, _url in candidates[:5]:
+    for title, member in match_candidates[:5]:
         for r in (search_album(title, max_count=3) or []):
             if r['id'] not in seen:
                 seen.add(r['id'])

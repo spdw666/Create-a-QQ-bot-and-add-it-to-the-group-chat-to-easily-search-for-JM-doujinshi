@@ -357,20 +357,33 @@ def extract_images(msg):
     return out
 
 
+# 允许的本地图片路径前缀（NapCat 缓存目录），防以图搜本读取任意本地文件
+LOCAL_IMG_PREFIXES = ('/root/Napcat/', '/root/.config/QQ/', '/opt/jmniang/')
+
+# 图片大小上限（防超大文件占用内存/外传）
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10MB
+
+
 def fetch_image_bytes(img_ref):
-    """下载图片：先试 url（QQ CDN），失败读 file 本地路径（与 NapCat 同机时可用）"""
+    """下载图片：先试 url（仅 QQ 图片 CDN 域名 + 大小上限，防 SSRF），失败读 file 本地路径（限 NapCat 缓存目录）"""
     import requests
     url = img_ref.get('url') or ''
     if url.startswith('http'):
-        try:
-            return requests.get(url, timeout=30).content
-        except Exception:
-            pass
+        host = url.split('/')[2].split('?')[0]
+        if host.endswith('.qpic.cn'):
+            try:
+                r = requests.get(url, timeout=30)
+                if r.status_code == 200 and len(r.content) <= MAX_IMAGE_BYTES:
+                    return r.content
+            except Exception:
+                pass
     path = img_ref.get('file') or ''
-    if path and os.path.isfile(path):
+    if path and path.startswith(LOCAL_IMG_PREFIXES) and os.path.isfile(path):
         try:
             with open(path, 'rb') as f:
-                return f.read()
+                data = f.read()
+            if len(data) <= MAX_IMAGE_BYTES:
+                return data
         except Exception:
             pass
     return None
