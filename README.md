@@ -1,103 +1,163 @@
-# JM娘 · 在 QQ 群里轻松搜索和下载禁漫本子的机器人
-# Create a QQ bot and add it to the group chat to easily search for JM doujinshi
+<div align="center">
 
-> 📖 本文档为中英双语 / This document is bilingual (中文 | English)
+# 🤖 JM娘
 
-一个 Python QQ 群机器人（**JM娘**）：群成员在群里 `@机器人` 即可搜索和下载 [jmcomic](https://github.com/tonquer/jmcomic) 支持的漫画本子。
-A Python QQ group bot (**JM娘**) that lets group members search and download doujinshi from [jmcomic](https://github.com/tonquer/jmcomic)-supported sources directly in a QQ group chat — by simply mentioning the bot.
+### Create a QQ bot and add it to the group chat to easily search for JM doujinshi
+
+*在 QQ 群里轻松搜索和下载本子的机器人 · A QQ group bot for searching & downloading doujinshi*
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
+[![jmcomic](https://img.shields.io/badge/jmcomic-2.7.4-ff69b4?style=flat-square)](https://github.com/tonquer/jmcomic)
+[![OneBot](https://img.shields.io/badge/Protocol-OneBot%20v11-7d3cff?style=flat-square)](https://onebot.dev/)
+
+</div>
+
+---
+
+> 📖 本文档为中英双语，中文在前、English 在后。 · This document is bilingual: Chinese first, English below.
 
 > ⚠️ **法律声明**：本项目仅供**学习交流**。涉及成人内容，请务必遵守你所在地区的法律法规与相关平台服务条款；使用非官方客户端/自动化工具存在账号被封风险。请勿用于任何非法用途。
+>
 > ⚠️ **Legal disclaimer**: This project is for **educational purposes only**. Adult content is involved; you are solely responsible for complying with the laws of your region and the terms of service of the platforms involved. Using unofficial clients/automation carries a real risk of account bans. Do not use this bot for any illegal activity.
+
+## 目录 · Table of Contents
+
+- [简介 Introduction](#简介-introduction)
+- [功能 Features](#功能-features)
+- [效果示例 Demo](#效果示例-demo)
+- [亮点 Highlights](#亮点-highlights)
+- [架构 Architecture](#架构-architecture)
+- [快速开始 Quick Start](#快速开始-quick-start)
+- [详细部署 Deployment](#详细部署-deployment)
+- [配置 Configuration](#配置-configuration)
+- [测试 Tests](#测试-tests)
+- [排障 Troubleshooting](#排障-troubleshooting)
+- [项目结构 Project layout](#项目结构-project-layout)
+- [License](#license)
+
+## 简介 Introduction
+
+**JM娘** 是一个 Python QQ 群机器人。群成员在群里 `@机器人` 即可搜索、下载 [jmcomic](https://github.com/tonquer/jmcomic) 支持的漫画本子——输入 ID 下载整本，输入关键词/名称/作者搜索，机器人自动打包加密 ZIP 上传群文件并附带浏览器下载链接。
+
+**JM娘** is a Python QQ group bot. Group members just `@mention` the bot to search and download doujinshi from [jmcomic](https://github.com/tonquer/jmcomic)-supported sources — send an album ID to download it, or a keyword / title / author to search. The bot packs the album into an encrypted ZIP, uploads it to group files, and attaches a browser download link.
 
 ## 功能 Features
 
-群成员 `@机器人` + 命令 / Mention the bot (`@bot`) followed by a command:
+群成员 `@机器人` + 命令。 · Mention the bot (`@bot`) followed by a command:
 
-| 命令 Command | 说明（中文） | Description (EN) |
+| 命令 Command | 说明 | Description |
 |---|---|---|
-| `@bot <漫画ID>` | 下载整本漫画 → 打包 ZIP → 上传群文件 + 发浏览器下载链接 | Downloads the entire album, packs it into one ZIP, uploads it to group files and sends a browser download link |
-| `@bot <关键词/名称>` | 搜索并返回最新 **5 本（含ID）**，支持翻页 | Searches and returns the latest **5 results with IDs** (paginated) |
-| `@bot 作者 <作者名>` | 按**作者**搜索，返回 5 本（含ID） | Searches by **author** and returns 5 results with IDs |
-| `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random recommendation from the hottest albums of the last 30 days |
-| `@bot 今日属性` | 随机占卜你的今日属性（NTR/纯爱等标签），@原用户并附赠一本对应标签的本子 | Random daily "attribute" fortune (NTR / pure-love / etc.), mentions the requester and gifts a matching album |
-| `@bot 下一页` | 查看上一页；**直接发「下一页」翻页、「第N页」跳页（均无需@机器人）** | Next page of the last search; **just send `下一页` to page or `第N页` to jump (no mention needed)** |
-| `@bot 取消` | 取消正在进行的下载 | Cancels the in-progress download |
-| `@bot 说明` | 查看使用说明 | Shows the help text |
+| `@bot <漫画ID>` | 下载整本 → 加密 ZIP → 上传群文件 + 浏览器链接 | Download an album → encrypted ZIP → group files + browser link |
+| `@bot <关键词/名称>` | 搜索，返回最新 5 本（含 ID），可翻页/跳页 | Search and return the latest 5 results with IDs (paginated) |
+| `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
+| `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random pick from the hottest albums of the last 30 days |
+| `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本 | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album |
+| `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
+| `@bot 取消` | 取消正在进行的下载 | Cancel the in-progress download |
+| `@bot 说明` | 查看使用说明 | Show the help text |
+
+## 效果示例 Demo
+
+搜索关键词「枫与铃」（简体输入，自动匹配日文标题「楓と鈴」）：
+
+> 🧑 `@JM娘 枫与铃`
+>
+> 🤖 🔍 关键词「枫与铃」（第 1/1 页 · 共 5 本）：
+> 1. 《[きょくちょ] 楓と鈴 (全) [中國翻譯] [無修正] [DL版]》 章节：1章
+>    🔢 ID：1235379
+> …
+> 💡 直接发「下一页」翻页，或发「第N页」跳转（无需@我）
+
+今日属性（@原用户 + 随机标签 + 附赠本子）：
+
+> 🧑 `@JM娘 今日属性`
+>
+> 🤖 @🧑 🎭 今日你的属性是【纯爱】！
+> 📕 附赠一本「纯爱」本子：
+> 《申鶴 純愛》
+> ✍️ 作者：八可可 Barcoco  章节：1章
+> 🔢 ID：1459505
 
 ## 亮点 Highlights
 
-- **智能中日文搜索 Smart CJK search** — 用简体中文搜索会自动匹配繁体/日文汉字/假名标题，通过 4 层降级机制：
-  Searching with Simplified Chinese automatically matches Traditional Chinese / Japanese kanji / kana titles through a 4-layer fallback:
-  1. 简→繁转换（`zhconv`）/ Simplified → Traditional conversion (`zhconv`)
-  2. 汉字异体映射（如 `琉→瑠`、`绘→絵`）/ Hanzi variant map (e.g. `琉 → 瑠`, `绘 → 絵`)
-  3. 中文虚词→日文假名（如 `与/和→と`、`的/之→の`——搜「枫与铃」能找到「楓と鈴」）/ Chinese function words → Japanese kana (e.g. `与/和 → と`, `的/之 → の` — searching `枫与铃` finds `楓と鈴`)
-  4. 核心字降级搜索：拆词逐字搜索，标题含全部核心字即命中（无字典依赖的普适兜底）/ Core-character degraded search: split the query into core characters, search each, keep titles containing all of them (dictionary-free universal fallback)
-- **搜索结果翻页 Paginated results** — 每页 5 本，直接发「下一页」翻页或「第N页」跳页（均无需@机器人）/ 5 per page; send `下一页` to page or `第N页` to jump — both without mentioning the bot
-- **加密 ZIP（AES-128）Encrypted ZIPs** — QQ 上传会扫描 ZIP 内容并静默删除成人文件；加密使扫描失效，上传得以存活（实测：未加密上传 `retcode=1200`，AES 加密 `retcode=0`）/ QQ scans ZIP contents on upload and silently deletes adult files; encryption makes the scan fail, so uploads survive (verified: unencrypted → `retcode=1200`, AES-encrypted → `retcode=0`)
-- **浏览器下载链接 Browser download links** — 每次下载附带 HTTP 直链兜底 / every download also gets an HTTP link as a fallback
-- **CQ 码转义 CQ-code escaping** — 用户可控字符串回显前转义，群成员无法用 `[CQ:...]` 让机器人 @全体/冒名发图 / user-controlled strings are escaped before being echoed, so group members can't make the bot `@all` or send fake images via `[CQ:...]`
-- **每群限流 Per-group rate limiting** — 搜索类命令 10 秒冷却 / 10 s cooldown on search requests
-- **进度汇报 / 排队 / 自动清理 Progress reports** (25/50/75%), queueing (2 concurrent downloads), 7-day auto-cleanup
+- **智能中日文搜索 Smart CJK search** —— 简体输入自动匹配繁体 / 日文汉字 / 假名标题，四层降级：
+  1. 简→繁转换（`zhconv`）
+  2. 汉字异体映射（如 `琉→瑠`、`绘→絵`）
+  3. 中文虚词→日文假名（如 `与/和→と`、`的/之→の`，搜「枫与铃」能命中「楓と鈴」）
+  4. 核心字降级搜索：拆词逐字搜索、标题含全部核心字即命中（无字典依赖的普适兜底）
+
+  *Searching with Simplified Chinese automatically matches Traditional / Japanese titles through a 4-layer fallback: (1) Simplified→Traditional via `zhconv`, (2) hanzi variant map (`琉→瑠`, `绘→絵`), (3) Chinese function words → kana (`与/和→と`, `的/之→の` — `枫与铃` finds `楓と鈴`), (4) dictionary-free core-character degraded search.*
+
+- **搜索结果翻页/跳页 Pagination** —— 每页 5 本，直接发「下一页」或「第N页」翻页跳页（均无需 @机器人）。*5 per page; send `下一页` / `第N页` to page or jump, no mention needed.*
+
+- **加密 ZIP（AES-128）Encrypted ZIPs** —— QQ 上传会扫描 ZIP 内容并静默删除成人文件；加密使扫描失效（实测：未加密 `retcode=1200`，AES 加密 `retcode=0`）。*QQ scans ZIP contents on upload; encryption defeats it (verified: unencrypted `retcode=1200` → AES `retcode=0`).*
+
+- **浏览器下载链接 Browser download links** —— 每次下载附带 HTTP 直链兜底。*Every download also gets an HTTP link as a fallback.*
+
+- **CQ 码转义 CQ-code escaping** —— 用户可控字符串回显前转义，群成员无法用 `[CQ:...]` 让机器人 @全体 / 冒名发图。*User-controlled strings are escaped before being echoed, blocking `[CQ:...]` injection.*
+
+- **每群限流 Rate limiting** —— 搜索类命令 10 秒冷却。*10 s per-group cooldown on search commands.*
+
+- **下载体验 Download UX** —— 进度汇报（25/50/75%）、并发排队（2 本）、7 天自动清理。*Progress reports, queueing (2 concurrent), 7-day auto-cleanup.*
 
 ## 架构 Architecture
 
 ```
-QQ 群聊天
-QQ group chat
-    │  OneBot v11 (WebSocket)
-    ▼
-NapCat（QQ 机器人运行时）── ws://127.0.0.1:8081 ──►  JM 机器人（Python，本仓库）
-NapCat (QQ bot runtime)                            JM bot (Python, this repo)
-                                                        │
-                                        jmcomic ──► 下载整本 ──► AES ZIP
-                                                     download album ──► AES ZIP
-                                                        │
-                          upload_group_file ──► QQ 群文件 / group files
-                          publish token URL  ──► http.server :8080
+QQ group chat ── OneBot v11 (WebSocket) ──► NapCat ──► JM bot (Python, this repo)
+                                                            │
+                                            jmcomic ──► download album ──► AES ZIP
+                                                            │
+                              upload_group_file ──► QQ group files
+                              publish token URL  ──► http.server :8080
 ```
 
-## 环境要求 Requirements
-
-- **NapCat**（或任意 OneBot v11 实现）+ 一个已登录的 QQ 账号 / **NapCat** (or any OneBot v11 implementation) with a QQ account logged in
-- Python 3.10+
-- 依赖 Dependencies：
+## 快速开始 Quick Start
 
 ```bash
+# 1. 安装依赖 · install dependencies
 pip install -r requirements.txt
+
+# 2. 配置环境变量 · configure environment
+export JM_ZIP_PASSWORD='你的ZIP密码'
+export JM_PUBLIC_IP='你的服务器公网IP'
+
+# 3. 启动 · run
+python jm_niang.py
 ```
 
-## 部署 Setup
+完整部署步骤（NapCat 配置、systemd 服务）见下方 [详细部署](#详细部署-deployment)。
+
+See [Deployment](#详细部署-deployment) below for the full setup (NapCat config, systemd service).
+
+## 详细部署 Deployment
 
 ### 1. 安装 NapCat 并配置 OneBot WebSocket
 
-安装对应平台的 NapCat（见 NapCat 官方文档），用机器人 QQ 号扫码登录一次，然后在 NapCat 里新增一个 OneBot v11 **正向 WebSocket 服务端**，监听 `ws://127.0.0.1:8081`（机器人主动连它）。可选：调高 OneBot 配置里的上传限速（`uploadSpeedKBps`）。
+安装对应平台的 NapCat（见官方文档），用机器人 QQ 号扫码登录一次，然后在 NapCat 里新增一个 OneBot v11 **正向 WebSocket 服务端**，监听 `ws://127.0.0.1:8081`（机器人主动连它）。可选：调高 OneBot 配置里的上传限速（`uploadSpeedKBps`）。
 
-Install NapCat for your platform (see the official NapCat docs), log in with the bot's QQ account (scan the QR code once), then create an OneBot v11 **forward WebSocket server** listening on `ws://127.0.0.1:8081` (the bot connects out to it). Optionally raise the upload speed limit (`uploadSpeedKBps`) in NapCat's OneBot config.
+Install NapCat for your platform (see official docs), log in with the bot's QQ account (scan the QR once), then create an OneBot v11 **forward WebSocket server** on `ws://127.0.0.1:8081`. Optionally raise `uploadSpeedKBps`.
 
-### 2. 配置机器人
+### 2. 配置机器人 Configure
 
-敏感值通过**环境变量**读取（不写死在代码里）。Sensitive values are read from environment variables (never hard-coded):
+敏感值通过**环境变量**读取（不写死在代码里），参考 [`.env.example`](.env.example)。
 
-| 变量 Variable | 含义 Meaning |
-|---|---|
-| `JM_ZIP_PASSWORD` | 上传 ZIP 的 AES 密码（需告知用户）/ AES password for uploaded ZIPs (must be shared with users) |
-| `JM_PUBLIC_IP` | 服务器公网 IP/域名，用于生成浏览器下载链接 / public IP/host of this server, used to build browser download links |
-| `JM_PROXY` | 可选 HTTP 代理（如 `http://127.0.0.1:7890`；留空=直连）/ optional HTTP proxy for jmcomic (empty = direct) |
+Sensitive values are read from environment variables (never hard-coded); see [`.env.example`](.env.example).
 
-用 HTTP 服务托管下载目录（8080 端口）：Serve the download directory over HTTP on port 8080:
+用 HTTP 服务托管下载目录（8080 端口）。Serve the download directory over HTTP on port 8080:
 
 ```bash
 mkdir -p http_dl
 python3 -m http.server 8080 --bind 0.0.0.0 --directory http_dl
 ```
 
-### 3. 运行
+### 3. 运行 Run
 
 ```bash
 python jm_niang.py
 ```
 
-或使用 systemd 服务（推荐）Or as a systemd service (recommended):
+或使用 systemd 服务（推荐）。Or as a systemd service (recommended):
 
 ```ini
 # /etc/systemd/system/jmniang.service
@@ -122,10 +182,19 @@ WantedBy=multi-user.target
 systemctl daemon-reload && systemctl enable --now jmniang
 ```
 
-### 4. 可选：群白名单
+### 4. 可选：群白名单（Optional: allow-list groups）
 
 编辑 `jm_niang.py` 里的 `ALLOWED_GROUPS` 可限制使用机器人的群（空列表 = 所有群可用）。
-Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which QQ groups may use the bot (empty list = all groups).
+
+Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot (empty = all groups).
+
+## 配置 Configuration
+
+| 变量 Variable | 必填 Required | 含义 Meaning |
+|---|---|---|
+| `JM_ZIP_PASSWORD` | ✅ | 上传 ZIP 的 AES 密码（需告知用户）。AES password for uploaded ZIPs. |
+| `JM_PUBLIC_IP` | ✅ | 服务器公网 IP/域名，用于生成浏览器下载链接。Public IP/host used to build download links. |
+| `JM_PROXY` | ❌ | 可选 HTTP 代理（如 `http://127.0.0.1:7890`；留空 = 直连）。Optional HTTP proxy (empty = direct). |
 
 ## 测试 Tests
 
@@ -133,28 +202,33 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which QQ groups may use the b
 python -m pytest test_jm_download.py
 ```
 
-覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页渲染、消息层全命令路由（全部离线，无需联网）。
-Covers ZIP encryption, CQ escaping, search-variant generation, author command parsing, pagination rendering and message-layer command routing (all offline, no network needed).
+覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页/跳页渲染、消息层全命令路由（全部离线，无需联网）。
+
+Covers ZIP encryption, CQ escaping, search-variant generation, author command parsing, pagination/jump rendering and message-layer command routing (all offline).
 
 ## 排障 Troubleshooting
 
 | 症状 Symptom | 原因与处理 Cause / fix |
 |---|---|
-| 机器人在群里没有反应 / Bot is silent in the group | QQ 账号被踢下线（NapCat 进程还活着）。快速探针：通过 WS 调 `send_group_msg`，返回 `retcode=1200 ... NodeIKernelMsgService` 超时 = QQ 内核已死 → 重启 NapCat 并重新扫码 / The QQ account was likely kicked offline (NapCat stays alive). Probe: call `send_group_msg` over WS; `retcode=1200 ... NodeIKernelMsgService` timeout means the QQ kernel is dead → restart NapCat and re-scan the QR code |
-| 群文件上传失败 / Group file upload fails | QQ 会扫描 ZIP 内容并拒绝成人图片 → 保持 `ZIP_ENCRYPT = True`（AES-128）；用户需用 WinRAR / 7-Zip / ZArchiver 解压 / QQ scans ZIP contents and rejects adult images → keep `ZIP_ENCRYPT = True` (AES-128); users need WinRAR / 7-Zip / ZArchiver to extract |
-| 明明存在的本子搜不到 / Search finds nothing for a known title | 站内搜索是精确子串匹配；4 层降级已覆盖简体/繁体/日文写法，但超冷门的单字组合仍可能漏（见 `jm_download.py` 的 `_search_by_core_chars`）/ The site search is exact substring matching; the 4-layer fallback covers Simplified/Traditional/Japanese writing, but ultra-rare single-character combos may still miss (see `_search_by_core_chars` in `jm_download.py`) |
+| 机器人在群里没有反应 | QQ 账号被踢下线（NapCat 进程还活着）。探针：WS 调 `send_group_msg`，返回 `retcode=1200 ... NodeIKernelMsgService` 超时 = QQ 内核已死 → 重启 NapCat 并重新扫码 |
+| Bot is silent in the group | The QQ account was kicked offline (NapCat stays alive). Probe via `send_group_msg`: `retcode=1200 ... NodeIKernelMsgService` timeout means the QQ kernel is dead → restart NapCat and re-scan QR |
+| 群文件上传失败 | QQ 扫描 ZIP 内容并拒绝成人图片 → 保持 `ZIP_ENCRYPT = True`（AES-128）；用户需 WinRAR / 7-Zip / ZArchiver 解压 |
+| Group file upload fails | QQ scans ZIP contents and rejects adult images → keep `ZIP_ENCRYPT = True` (AES-128); users need WinRAR / 7-Zip / ZArchiver |
+| 明明存在的本子搜不到 | 站内搜索是精确子串匹配；4 层降级已覆盖简体/繁体/日文写法，但超冷门单字组合仍可能漏（见 `_search_by_core_chars`） |
+| Search misses a known title | Site search is exact substring matching; the 4-layer fallback covers most cases, but ultra-rare combos may still miss (see `_search_by_core_chars`) |
 
 ## 项目结构 Project layout
 
 ```
-jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页
+jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页
                      # QQ bot main loop: OneBot WS client, command handling, uploads, pagination
-jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索（变体+翻页）、缓存、清理
-                     # jmcomic wrapper: download → AES ZIP, smart search (variants + pagination), cache, cleanup
-test_jm_download.py  # 离线单元测试 / offline unit tests
-start_jmniang.bat    # 可选 Windows 启动脚本 / optional Windows launcher
+jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索、缓存、清理
+                     # jmcomic wrapper: download → AES ZIP, smart search, cache, cleanup
+test_jm_download.py  # 离线单元测试（14 项）· offline unit tests (14 cases)
+.env.example         # 环境变量示例 · environment variable template
+start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
 ```
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE) / see [LICENSE](LICENSE).
+[MIT](LICENSE) © 2026 spdw666
