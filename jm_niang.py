@@ -1033,20 +1033,20 @@ async def handle_message(ws, api, msg, bot_qq):
             await handle_jm_request(ws, api, group_id, user_id, album_id)
         return
 
-    # 识图意图：@机器人 + 识图/搜图 → 进入20秒等待窗口，期间直接发图即可
-    if text.lower() in IMAGE_WAIT_WORDS:
+    # 以图搜本：@机器人 + [图片]（text 为空但带图）→ 直接识图
+    images = extract_images(msg)
+    if images:
+        log(f'识图请求: url={images[0]["url"][:100]!r} file={images[0]["file"][:80]!r}')
+        await handle_image_search(api, group_id, images)
+        return
+
+    # 识图意图：@机器人 + 识图/搜图，或纯@（空文本）→ 进入20秒等待窗口，期间直接发图即可
+    if not text or text.lower() in IMAGE_WAIT_WORDS:
         IMAGE_WAIT[group_id] = {'user_id': user_id, 'expires': time.time() + IMAGE_WAIT_SECONDS}
         await api('send_group_msg', {
             'group_id': group_id,
             'message': f'📸 请在 {IMAGE_WAIT_SECONDS} 秒内直接发送图片（无需再@我）'
         })
-        return
-
-    # 以图搜本：@机器人 + [图片]（text 为空但带图）
-    images = extract_images(msg)
-    if images:
-        log(f'识图请求: url={images[0]["url"][:100]!r} file={images[0]["file"][:80]!r}')
-        await handle_image_search(api, group_id, images)
         return
 
     # 关键词搜索：@机器人 + 关键词 → 返回前5本（ID列表）
