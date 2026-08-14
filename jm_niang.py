@@ -674,12 +674,12 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             'message': f'《{escape_cq(title)}》\n大小：{format_bytes(size)}\n正在上传到群文件…'
         })
 
-        # 上传群文件（大文件可能较慢，给足超时；QQ偶发限流，自动重试5次）
+        # 上传群文件（大文件可能较慢，给足超时；QQ偶发限流，自动重试2次）
         # 注意：NapCat 大文件上传常出现"事件确认超时"假失败（文件实际已上传成功），
-        # 重试前先查群文件列表，已存在则视为成功，避免重复上传两个文件
+        # 重试前先查群文件列表，已存在则视为成功；查列表 API 异常时不再盲目重试（防重复文件）
         result = None
         last_err = ''
-        for attempt in range(1, 6):
+        for attempt in range(1, 3):
             # 上传中每 10 秒报一次进度（用户要求：避免以为卡住）
             upload_task = asyncio.create_task(api('upload_group_file', {
                 'group_id': group_id,
@@ -716,9 +716,9 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
                 log(f'上传事件确认失败但群文件已存在（假失败），视为成功: {file_name}')
                 result = {'retcode': 0}
                 break
-            last_err = (result.get('message') or result.get('wording') or '')[:200] or f'retcode={retcode}'
-            log(f'上传失败(第{attempt}次): {last_err}，8秒后重试…')
-            await asyncio.sleep(8)
+            # 查列表 API 异常（files 空 + retcode 非0）：QQ 端状态不稳，不再重试（防重复文件）
+            log(f'上传失败(第{attempt}次)且群文件列表不可用，停止重试（防重复上传）')
+            break
 
         retcode = result.get('retcode') if result else None
         if retcode in (0, None):
