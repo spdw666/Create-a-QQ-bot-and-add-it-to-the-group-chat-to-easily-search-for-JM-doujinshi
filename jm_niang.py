@@ -136,6 +136,8 @@ HELP_TEXT = (
     '🛑 取消下载：@我 取消\n'
     '   （也支持：停止 / stop / 算了）\n'
     '   停止当前下载并清除已下载的缓存\n\n'
+    '📋 查看任务：@我 任务\n'
+    '   查看正在处理的任务及预计剩余时间\n\n'
     '🎲 随机推荐：@我 随机\n'
     '   （也支持：抽一本 / 推荐 / 来一本）\n'
     '   从近30天最火的本子里随机抽一本推荐\n\n'
@@ -185,6 +187,9 @@ TAG_WORDS = {'今日属性', '属性', 'today'}
 
 # 排行榜命令词
 RANK_WORDS = {'日榜', '周榜', '月榜', 'day', 'week', 'month'}
+
+# 任务查询命令词（@机器人 任务 → 查看当前处理中任务及预计时间）
+TASK_WORDS = {'任务', '队列', '排队', 'task', 'queue'}
 
 # 翻页命令词（支持免@：用户直接发「下一页」即可翻页；'继续'等宽泛词不收录，防普通聊天误触发）
 NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
@@ -1124,6 +1129,21 @@ async def handle_message(ws, api, msg, bot_qq):
             await api('send_group_msg', {
                 'group_id': group_id,
                 'message': f'❌ 获取漫画 {detail_id} 信息失败（ID 不存在或网络波动）'
+            })
+        return
+
+    # 任务查询：@机器人 + 任务 → 查看当前处理中任务及预计剩余时间
+    if text.lower() in TASK_WORDS:
+        tasks_txt = render_task_status()
+        if tasks_txt:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': f'📋 当前任务：\n{tasks_txt}'
+            })
+        else:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '✅ 当前没有正在处理的任务，可以直接@我下载哦～'
             })
         return
 
