@@ -51,6 +51,8 @@ WS_PORT = 8081
 # 掉线恢复通知群（重连成功时发"已恢复上线"；环境变量 JM_NOTIFY_GROUP 可覆盖，默认测试群）
 NOTIFY_GROUP = int(os.environ.get('JM_NOTIFY_GROUP', '810152420'))
 FIRST_CONNECTION = True  # 首次连接不发恢复通知，重连才发
+OFFLINE_MARK = 0.0  # 最近一次重连时刻；time < 此值的 @ 消息视为掉线期间补推
+APOLOGY_SENT = {}  # group_id -> 最近道歉时刻（每群每次掉线只道歉一次，防刷屏）
 
 # 允许使用机器人的群白名单。空列表 = 所有群都能用。
 # 想限制只让某个群使用，填群的数字ID，例如: ALLOWED_GROUPS = [123456789]
@@ -833,6 +835,19 @@ async def handle_message(ws, api, msg, bot_qq):
 
     # 必须 @机器人 才响应
     at_me, text = parse_group_message(msg, bot_qq)
+    if at_me and OFFLINE_MARK:
+        # 掉线期间补推的 @ 消息（time 早于重连时刻）：先 @回 用户道歉
+        msg_time = msg.get('time') or 0
+        now = time.time()
+        if msg_time < OFFLINE_MARK and now - APOLOGY_SENT.get(group_id, 0) > 60:
+            APOLOGY_SENT[group_id] = now
+            try:
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': f'[CQ:at,qq={user_id}] 不好意思，刚刚掉线了，现已重新上线，想看什么本子尽管说吧',
+                })
+            except Exception:
+                pass
     if not at_me:
         # 识图等待窗口：@过「识图」后 20 秒内，该用户直接发的图自动识图
         wait = IMAGE_WAIT.get(group_id)
@@ -1269,7 +1284,7 @@ async def handle_message(ws, api, msg, bot_qq):
 
 async def handle_connection(ws):
     """WS连接处理：reader 后台任务统一消费数据，api() 匹配 echo 响应，事件分发给处理函数"""
-    global FIRST_CONNECTION
+    global FIRST_CONNECTION, OFFLINE_MARK
     pending: dict = {}
     bot_qq_box = [None]  # 可变容器，reader 闭包读取
     log(f'NapCat 已连接: {ws.remote_address}')
@@ -1283,6 +1298,8 @@ async def handle_connection(ws):
 
     # 掉线恢复通知：重连成功后向通知群发消息（首次连接不发）
     if not FIRST_CONNECTION:
+        OFFLINE_MARK = time.time()  # 标记重连时刻：此前时间的 @ 消息 = 掉线期间补推，需道歉
+        APOLOGY_SENT.clear()
         try:
             await api('send_group_msg', {
                 'group_id': NOTIFY_GROUP,
