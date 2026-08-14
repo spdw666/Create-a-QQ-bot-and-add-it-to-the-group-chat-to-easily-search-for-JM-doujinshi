@@ -53,7 +53,7 @@
 | `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
 | `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
 | `@bot 日榜/周榜/月榜` | 查看排行榜前 5（支持翻页） | Daily / weekly / monthly ranking top 5 (paginated) |
-| `@bot <图片>` | 以图搜本：识图反查出处并尝试在禁漫匹配同款（SauceNAO + iQDB） | Reverse image search: identify the source and try to match the album on the site (SauceNAO + iQDB) |
+| `@bot <图片>` | 以图搜本：识图反查出处并尝试在禁漫匹配同款（OCR 文字 → SauceNAO → E-Hentai → iQDB → AI 视觉，四引擎并行） | Reverse image search: identify the source and try to match the album on the site (OCR → SauceNAO → E-Hentai → iQDB → vision AI, 4 engines in parallel) |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本（优先章节少的） | Random pick from the hottest albums of the last 30 days (prefers fewer chapters) |
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本（优先章节少的） | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album (prefers fewer chapters) |
 | `@bot 详情 <ID>` | 查看漫画详情（标题/作者/标签/章节页数，纯文字） | Show album details (title / author / tags / pages, text only) |
@@ -104,7 +104,7 @@
 
 - **每群限流 Rate limiting** —— 搜索类命令 10 秒冷却。*10 s per-group cooldown on search commands.*
 
-- **下载体验 Download UX** —— 进度汇报（25/50/75%）、并发排队（2 本）、7 天自动清理。*Progress reports, queueing (2 concurrent), 7-day auto-cleanup.*
+- **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、7 天自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 7-day auto-cleanup.*
 
 ## 架构 Architecture
 
