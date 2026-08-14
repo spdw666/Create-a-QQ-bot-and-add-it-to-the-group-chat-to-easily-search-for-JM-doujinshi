@@ -55,13 +55,15 @@
 | `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
 | `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
 | `@bot 日榜/周榜/月榜` | 查看排行榜前 5（支持翻页） | Daily / weekly / monthly ranking top 5 (paginated) |
-| `@bot <图片>` | 以图搜本：识图反查出处并尝试在禁漫匹配同款（OCR 文字 → SauceNAO → E-Hentai → iQDB → AI 视觉，四引擎并行） | Reverse image search: identify the source and try to match the album on the site (OCR → SauceNAO → E-Hentai → iQDB → vision AI, 4 engines in parallel) |
+| `@bot <图片>` | 以图搜本：OCR 文字优先 → SauceNAO / E-Hentai / iQDB 并行识图 → AI 视觉兜底，反查出处并尝试在禁漫匹配同款 | Reverse image search: OCR text first → SauceNAO / E-Hentai / iQDB in parallel → vision AI fallback |
+| `@bot 识图` | 进入识图等待窗口：20 秒内直接发图即可搜（无需再@） | Enter image-search mode: send the image within 20 s (no re-mention needed) |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本（优先章节少的） | Random pick from the hottest albums of the last 30 days (prefers fewer chapters) |
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本（优先章节少的） | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album (prefers fewer chapters) |
 | `@bot 详情 <ID>` | 查看漫画详情（标题/作者/标签/章节页数，纯文字） | Show album details (title / author / tags / pages, text only) |
 | `@bot 任务` | 查看正在处理的任务及预计剩余时间 | Show in-progress tasks with ETA |
 | `@bot 安装包` | 发送禁漫天堂 APP 安装包（安卓 APK + 苹果描述文件，加密 ZIP 上传群文件 + 浏览器链接；也支持 `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包`） | Send the official app installer (Android APK + iOS profile, encrypted ZIP + browser link; `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包` also work) |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
+| `@bot 不对` | 重新搜索上一次的结果（含识图重搜） | Re-run the last search (image search included) |
 | `@bot 取消` | 取消正在进行的下载 | Cancel the in-progress download |
 | `@bot 说明` | 查看使用说明 | Show the help text |
 
@@ -107,7 +109,7 @@
 
 - **每群限流 Rate limiting** —— 搜索类命令 10 秒冷却。*10 s per-group cooldown on search commands.*
 
-- **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃 15 秒自动恢复（免扫码快速登录）；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery within ~15 s of a crash; "upgrading" reply during deploys; auto-accepts group invites.*
+- **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃自动拉起（`-q` 快速登录免扫码，约 1-2 分钟恢复；10 分钟冷却）；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery (~1-2 min: 1-min poll + `-q` quick login, 10-min cooldown); "upgrading" reply during deploys; auto-accepts group invites.*
 
 - **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、7 天自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 7-day auto-cleanup.*
 
@@ -233,16 +235,16 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 
 ```bash
 # napcat_watchdog.sh —— 每分钟检测 NapCat 8081 端口，掉线自动拉起 QQ（快速登录，已登录态免扫码）
-# 由 cron 每分钟执行；脚本内置 20 分钟冷却，防止反复重启风暴
+# 由 cron 每分钟执行；脚本内置 10 分钟冷却，防止反复重启风暴（注意：冷却期内再崩不会拉起）
 * * * * * /opt/jmniang/napcat_watchdog.sh
 
 # qq_daily_restart.sh —— 每天 04:30 主动重启一次 QQ（清理长时间运行的内存泄漏）
 30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
-> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟持续恶化中），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。`napcat_offline_report.py` 由 cron 每 2 小时从 journalctl 统计重连次数，汇总报告发到 `JM_NOTIFY_GROUP`（独立于 jmniang 进程，部署重启不影响统计）。
+> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟恶化，另有腾讯风控因素，详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)），watchdog 轮询 `ss -tln | grep :8081` 检测掉线（每 1 分钟一次），用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，拉起约 15-30 秒；10 分钟冷却期内不重复拉起）。`napcat_offline_report.py` 由 cron 每 2 小时从 journalctl 统计重连次数，汇总报告发到 `JM_NOTIFY_GROUP`（独立于 jmniang 进程，部署重启不影响统计）。
 >
-> 💡 *How it works: the Linux QQ client crashes periodically (~every 30 min). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15 s total). `napcat_offline_report.py` (cron, every 2 h) counts reconnects from journalctl and sends a summary to `JM_NOTIFY_GROUP` — independent of the jmniang process, so deploys don't reset the stats.*
+> 💡 *How it works: the Linux QQ client crashes periodically (intervals shrank 30→20→10 min, compounded by Tencent risk-control; see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15-30 s to come up; it does not relaunch again within the 10-min cooldown). `napcat_offline_report.py` (cron, every 2 h) counts reconnects from journalctl and sends a summary to `JM_NOTIFY_GROUP` — independent of the jmniang process, so deploys don't reset the stats.*
 
 ### 无感部署 Zero-downtime deploys
 
@@ -250,6 +252,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 
 ```bash
 # 用法：python deploy.py <文件名>（远程路径内置映射）
+# 前置：仓库根目录放 .deploy_secret 文件（服务器 root 密码，已被 .gitignore 排除不入库）
 python deploy.py jm_niang.py
 ```
 
@@ -277,8 +280,8 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 | Group file upload fails | QQ scans ZIP contents and rejects adult images → keep `ZIP_ENCRYPT = True` (AES-128); users need WinRAR / 7-Zip / ZArchiver |
 | 明明存在的本子搜不到 | 站内搜索是精确子串匹配；4 层降级已覆盖简体/繁体/日文写法，但超冷门单字组合仍可能漏（见 `_search_by_core_chars`） |
 | Search misses a known title | Site search is exact substring matching; the 4-layer fallback covers most cases, but ultra-rare combos may still miss (see `_search_by_core_chars`) |
-| 机器人周期性掉线（30→20→10 分钟递减） | QQ Linux 客户端自身 bug（3.2.30 起周期性崩溃），与项目无关；watchdog 每分钟检测 + 15 秒自动恢复兜底（见[运维](#运维-operations)） |
-| Bot drops offline about every 30 min | A bug in the Linux QQ client itself (periodic crashes since 3.2.30), unrelated to this project; the watchdog restores it in ~15 s (see [Operations](#运维-operations)) |
+| 机器人周期性掉线（间隔曾 30→20→10 分钟递减） | QQ Linux 客户端自身 bug + 腾讯风控叠加（详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)）；watchdog 每分钟检测 + `-q` 快速登录拉起（约 1-2 分钟恢复，10 分钟冷却），NapCat 反检测 bypass 已开启（见[部署](#详细部署-deployment)） |
+| Bot drops offline periodically (intervals shrank 30→20→10 min) | Linux QQ client bug compounded by Tencent risk-control (see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)); watchdog polls every minute and relaunches with `-q` quick login (~1-2 min recovery, 10-min cooldown), NapCat anti-detection bypass enabled (see [Deployment](#详细部署-deployment)) |
 | 群里出现两个同名文件 | 已修复：上传失败重试前会查群文件列表去重，列表 API 异常时停止重试（重试上限 2 次） |
 | Duplicate files appear in group | Fixed: the uploader checks the group file list before retrying, and stops retrying if the list API is broken (max 2 attempts) |
 
@@ -288,7 +291,7 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 A：是部署时配置的 `JM_ZIP_PASSWORD`。必须加密——QQ 会扫描 ZIP 内容并静默删除成人图片（实测未加密 `retcode=1200` 上传失败，AES-128 加密后 `retcode=0` 正常）。用 WinRAR / 7-Zip / ZArchiver 解压即可。
 
 **Q：为什么机器人偶尔掉线？**
-A：QQ Linux 客户端本身有周期性崩溃 bug（间隔 30→20→10 分钟持续恶化），与项目代码无关。机器人已配备看门狗自动恢复（约 15 秒，免扫码），恢复后每 2 小时向通知群汇总一次掉线报告。
+A：QQ Linux 客户端本身有周期性崩溃 bug（间隔 30→20→10 分钟恶化，另有腾讯风控因素），与项目代码无关。机器人已配备看门狗自动恢复（约 1-2 分钟，`-q` 快速登录免扫码），恢复后每 2 小时向通知群汇总一次掉线报告。
 
 **Q：掉线期间发的命令会丢失吗？**
 A：会。QQ 重登后不补推离线消息（掉线期间的消息已被手机端接收），所以掉线窗口内的 @ 命令机器人收不到，上线后请重新发一次。
