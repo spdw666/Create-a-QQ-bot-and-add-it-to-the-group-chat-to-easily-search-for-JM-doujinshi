@@ -31,8 +31,10 @@
 - [快速开始 Quick Start](#快速开始-quick-start)
 - [详细部署 Deployment](#详细部署-deployment)
 - [配置 Configuration](#配置-configuration)
+- [运维 Operations](#运维-operations)
 - [测试 Tests](#测试-tests)
 - [排障 Troubleshooting](#排障-troubleshooting)
+- [常见问题 FAQ](#常见问题-faq)
 - [项目结构 Project layout](#项目结构-project-layout)
 - [License](#license)
 
@@ -206,6 +208,39 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped). |
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 | `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
+| `JM_NOTIFY_GROUP` | ❌ | 掉线恢复通知群（QQ 群号；NapCat 重连成功时发"已恢复上线"通知，默认 `810152420`）。Group ID for "back online" notifications after reconnect (default `810152420`). |
+
+## 运维 Operations
+
+### 看门狗与自动恢复 Watchdog & auto-recovery
+
+仓库自带两个运维脚本（已在生产环境跑通），保障机器人"掉线了也能自己爬起来"：
+
+```bash
+# napcat_watchdog.sh —— 每分钟检测 NapCat 8081 端口，掉线自动拉起 QQ（快速登录，已登录态免扫码）
+# 由 cron 每分钟执行；脚本内置 20 分钟冷却，防止反复重启风暴
+* * * * * /opt/jmniang/napcat_watchdog.sh
+
+# qq_daily_restart.sh —— 每天 04:30 主动重启一次 QQ（清理长时间运行的内存泄漏）
+30 4 * * * /opt/jmniang/qq_daily_restart.sh
+```
+
+> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（约 30 分钟一次），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。恢复后机器人会向 `JM_NOTIFY_GROUP` 发"已恢复上线"，并对掉线期间 @ 它的用户逐个 @回 道歉。
+>
+> 💡 *How it works: the Linux QQ client crashes periodically (~every 30 min). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15 s total). On recovery the bot notifies `JM_NOTIFY_GROUP` and @-apologizes to users who mentioned it while offline.*
+
+### 无感部署 Zero-downtime deploys
+
+更新代码时用 `deploy.py`，整个升级过程对群友无感——升级窗口内 @机器人 会收到"正在升级中，请稍后"（由 `maintain_reply.py` 维护应答器代答）：
+
+```bash
+# 用法：python deploy.py <文件名>（远程路径内置映射）
+python deploy.py jm_niang.py
+```
+
+> 💡 **原理（懂行版）**：`deploy.py` 按序执行：① 拉起 `maintain_reply.py`（另开一条 WS 连接独占 8081，回复所有 @ 消息"正在升级中"）→ ② `systemctl stop jmniang` → ③ base64 分块上传（服务器 sshd 对 SFTP 通道不稳定，改走 exec 通道 + md5 校验）→ ④ `systemctl start jmniang` → ⑤ 关闭应答器。任何一步失败会自动恢复 JM娘 并清理应答器。
+>
+> 💡 *The deploy script: (1) starts `maintain_reply.py`, a second WS client that answers all @mentions with "upgrading…" while the bot is down, (2) stops the bot, (3) uploads via chunked base64 over exec (the server's SFTP channel is flaky; md5-verified), (4) restarts the bot, (5) kills the replier. Any failure auto-restores the bot.*
 
 ## 测试 Tests
 
@@ -227,15 +262,54 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 | Group file upload fails | QQ scans ZIP contents and rejects adult images → keep `ZIP_ENCRYPT = True` (AES-128); users need WinRAR / 7-Zip / ZArchiver |
 | 明明存在的本子搜不到 | 站内搜索是精确子串匹配；4 层降级已覆盖简体/繁体/日文写法，但超冷门单字组合仍可能漏（见 `_search_by_core_chars`） |
 | Search misses a known title | Site search is exact substring matching; the 4-layer fallback covers most cases, but ultra-rare combos may still miss (see `_search_by_core_chars`) |
+| 机器人每 30 分钟左右掉线一次 | QQ Linux 客户端自身 bug（3.2.30 起周期性崩溃），与项目无关；watchdog 每分钟检测 + 15 秒自动恢复兜底（见[运维](#运维-operations)） |
+| Bot drops offline about every 30 min | A bug in the Linux QQ client itself (periodic crashes since 3.2.30), unrelated to this project; the watchdog restores it in ~15 s (see [Operations](#运维-operations)) |
+| 群里出现两个同名文件 | 已修复：上传失败重试前会查群文件列表去重，列表 API 异常时停止重试（重试上限 2 次） |
+| Duplicate files appear in group | Fixed: the uploader checks the group file list before retrying, and stops retrying if the list API is broken (max 2 attempts) |
+
+## 常见问题 FAQ
+
+**Q：下载的 ZIP 解压要密码，密码是什么？**
+A：是部署时配置的 `JM_ZIP_PASSWORD`。必须加密——QQ 会扫描 ZIP 内容并静默删除成人图片（实测未加密 `retcode=1200` 上传失败，AES-128 加密后 `retcode=0` 正常）。用 WinRAR / 7-Zip / ZArchiver 解压即可。
+
+**Q：为什么机器人偶尔掉线？**
+A：QQ Linux 客户端本身有周期性崩溃 bug（约 30 分钟一次），与项目代码无关。机器人已配备看门狗自动恢复（约 15 秒，免扫码），恢复后会通知群里并 @回 掉线期间找它的人。
+
+**Q：掉线期间发的命令会丢失吗？**
+A：QQ 重登后会补推离线消息，机器人上线后照常处理这些命令，并先 @你 道歉。
+
+**Q：升级机器人时群里会怎样？**
+A：升级窗口内 @机器人 会收到"🚧 正在升级中，请稍后～"；窗口通常只有几秒钟。
+
+**Q：怎么让机器人进我的群？**
+A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群发欢迎消息（QQ 协议限制机器人不能主动加群）。
+
+*Q: What's the ZIP password? — A: The `JM_ZIP_PASSWORD` you configured at deploy time. Encryption is mandatory because QQ silently deletes adult images inside plain ZIPs (verified: unencrypted upload fails with `retcode=1200`; AES-128 passes with `retcode=0`). Unzip with WinRAR / 7-Zip / ZArchiver.*
+
+*Q: Why does the bot drop offline sometimes? — A: The Linux QQ client itself crashes periodically (~every 30 min). The bundled watchdog restores it in ~15 s (token-based quick login, no QR re-scan), then notifies the group and apologizes to users who @'d it while offline.*
+
+*Q: Do commands sent while offline get lost? — A: QQ re-pushes offline messages after re-login; the bot processes them as usual after apologizing to you first.*
+
+*Q: What happens during bot upgrades? — A: @mentions during the deploy window get "🚧 Upgrading, please wait"; the window is usually a few seconds.*
+
+*Q: How do I get the bot into my group? — A: Just invite the bot's QQ account; it auto-accepts invites and greets the group (QQ protocol forbids bots from joining groups on their own).*
 
 ## 项目结构 Project layout
 
 ```
-jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页
-                     # QQ bot main loop: OneBot WS client, command handling, uploads, pagination
+jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页、掉线道歉、自动同意邀请
+                     # QQ bot main loop: OneBot WS client, command handling, uploads, pagination, offline apology, auto-accept invites
 jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索、缓存、清理
                      # jmcomic wrapper: download → AES ZIP, smart search, cache, cleanup
-test_jm_download.py  # 离线单元测试（14 项）· offline unit tests (14 cases)
+maintain_reply.py    # 维护应答器：升级窗口内代答"正在升级中"（deploy.py 自动拉起/关闭）
+                     # maintenance replier: answers @mentions with "upgrading" during deploy windows
+deploy.py            # 无感部署脚本：应答器→停机→上传→恢复→清理，失败自动回滚
+                     # zero-downtime deploy script: replier → stop → upload → restore → cleanup, auto-rollback on failure
+napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉起 QQ（快速登录免扫码）
+                     # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (token-based quick login)
+qq_daily_restart.sh  # 每日 04:30 重启 QQ，清理长时间运行的内存泄漏
+                     # daily 04:30 QQ restart to clear long-running memory leaks
+test_jm_download.py  # 离线单元测试（15 项）· offline unit tests (15 cases)
 .env.example         # 环境变量示例 · environment variable template
 start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
 ```
