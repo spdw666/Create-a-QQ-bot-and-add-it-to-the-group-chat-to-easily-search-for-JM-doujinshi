@@ -19,6 +19,7 @@ import shutil
 import sys
 import time
 import uuid
+import datetime
 
 import websockets
 
@@ -48,8 +49,9 @@ from jm_download import (
 
 WS_HOST = '127.0.0.1'
 WS_PORT = 8081
-# 掉线汇总报告改由服务器 cron 独立脚本 napcat_offline_report.py 统计（不依赖本进程状态，deploy 重启不丢）
 FIRST_CONNECTION = True  # 首次连接不发恢复通知，重连才发
+START_TIME = time.time()  # 进程启动时刻（自查命令用）
+CUR_CONN_TIME = None  # 当前 NapCat WS 连接建立时刻（自查命令用）
 
 # 允许使用机器人的群白名单。空列表 = 所有群都能用。
 # 想限制只让某个群使用，填群的数字ID，例如: ALLOWED_GROUPS = [123456789]
@@ -146,6 +148,8 @@ HELP_TEXT = (
     '   停止当前下载并清除已下载的缓存\n\n'
     '📋 查看任务：@我 任务\n'
     '   查看正在处理的任务及预计剩余时间\n\n'
+    '🔍 自查：@我 自查\n'
+    '   查看运行时长与当前连接状态\n\n'
     '🎲 随机推荐：@我 随机\n'
     '   （也支持：抽一本 / 推荐 / 来一本）\n'
     '   从近30天最火的本子里随机抽一本推荐\n\n'
@@ -204,6 +208,9 @@ RANK_WORDS = {'日榜', '周榜', '月榜', 'day', 'week', 'month'}
 
 # 任务查询命令词（@机器人 任务 → 查看当前处理中任务及预计时间）
 TASK_WORDS = {'任务', '队列', '排队', 'task', 'queue'}
+
+# 自查命令词（@机器人 自查 → 报告运行时长与连接状态）
+SELF_CHECK_WORDS = {'自查'}
 
 # 翻页命令词（支持免@：用户直接发「下一页」即可翻页；'继续'等宽泛词不收录，防普通聊天误触发）
 NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
@@ -547,6 +554,28 @@ async def _group_file_exists(api, group_id, file_name, retries=2, delay=6):
             pass
         await asyncio.sleep(delay)
     return False
+
+
+def _fmt_duration(sec):
+    """秒 → 可读时长（x天x小时x分x秒，前导 0 单位省略）"""
+    d, r = divmod(int(sec), 86400)
+    h, r = divmod(r, 3600)
+    m, s = divmod(r, 60)
+    parts = [f'{d}天' if d else '', f'{h}小时' if h else '', f'{m}分' if m else '', f'{s}秒']
+    return ''.join(parts)
+
+
+def render_self_check():
+    """自查报告：进程启动时刻/运行时长 + 当前 NapCat 连接时刻/时长"""
+    start_txt = datetime.datetime.fromtimestamp(START_TIME).strftime('%m-%d %H:%M:%S')
+    lines = [f'🤖 自查报告：',
+             f'· 机器人进程：自 {start_txt} 启动，已运行 {_fmt_duration(time.time() - START_TIME)}']
+    if CUR_CONN_TIME:
+        conn_txt = datetime.datetime.fromtimestamp(CUR_CONN_TIME).strftime('%m-%d %H:%M:%S')
+        lines.append(f'· 当前QQ连接：自 {conn_txt} 建立，已在线 {_fmt_duration(time.time() - CUR_CONN_TIME)}')
+    else:
+        lines.append('· 当前QQ连接：尚未建立')
+    return '\n'.join(lines)
 
 
 def render_task_status():
@@ -1314,6 +1343,14 @@ async def handle_message(ws, api, msg, bot_qq):
             })
         return
 
+    # 自查：@机器人 + 自查 → 报告进程启动时刻/运行时长 + 当前QQ连接时长（纯本地计算）
+    if text.lower() in SELF_CHECK_WORDS:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': render_self_check(),
+        })
+        return
+
     # 下载命令：@机器人 + /jm数字
     album_id = extract_album_id(text)
     if album_id:
@@ -1404,10 +1441,11 @@ async def handle_message(ws, api, msg, bot_qq):
 
 async def handle_connection(ws):
     """WS连接处理：reader 后台任务统一消费数据，api() 匹配 echo 响应，事件分发给处理函数"""
-    global FIRST_CONNECTION
+    global FIRST_CONNECTION, CUR_CONN_TIME
     pending: dict = {}
     bot_qq_box = [None]  # 可变容器，reader 闭包读取
     log(f'NapCat 已连接: {ws.remote_address}')
+    CUR_CONN_TIME = time.time()
 
     async def api(action, params=None, timeout=60):
         echo = str(uuid.uuid4())

@@ -231,6 +231,9 @@ def test_handle_message_branches():
     # 1. 说明
     run('说明')
     assert len(sent) == 1 and '使用说明' in sent[0][1]['message']
+    # 1b. 自查：报告进程运行时长与连接状态
+    run('自查')
+    assert len(sent) == 1 and '自查报告' in sent[0][1]['message'] and '机器人进程' in sent[0][1]['message']
     # 2. 关键词搜索：12本 → 第1页 + 翻页提示 + 状态缓存
     jm_niang.search_album = lambda kw, n=5: [{'title': f'本{i}', 'chapter_count': 1,
                                               'id': str(100000 + i), 'author': 'a'}

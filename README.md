@@ -61,6 +61,7 @@
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本（优先章节少的） | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album (prefers fewer chapters) |
 | `@bot 详情 <ID>` | 查看漫画详情（标题/作者/标签/章节页数，纯文字） | Show album details (title / author / tags / pages, text only) |
 | `@bot 任务` | 查看正在处理的任务及预计剩余时间 | Show in-progress tasks with ETA |
+| `@bot 自查` | 查看机器人运行时长与当前 QQ 连接状态 | Show bot uptime and current QQ connection status |
 | `@bot 安装包` | 发送禁漫天堂 APP 安装包（安卓 APK + 苹果描述文件，加密 ZIP 上传群文件 + 浏览器链接；也支持 `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包`） | Send the official app installer (Android APK + iOS profile, encrypted ZIP + browser link; `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包` also work) |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
 | `@bot 不对` | 重新搜索上一次的结果（含识图重搜） | Re-run the last search (image search included) |
