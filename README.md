@@ -236,6 +236,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 ```bash
 # napcat_watchdog.sh —— 每分钟检测 NapCat 8081 端口，掉线自动拉起 QQ（快速登录，已登录态免扫码）
 # 由 cron 每分钟执行；脚本内置 10 分钟冷却，防止反复重启风暴（注意：冷却期内再崩不会拉起）
+# ⚠️ 检测用 /usr/sbin/ss 绝对路径——用户 crontab 默认 PATH 不含 /usr/sbin，用裸 ss 会一直误判掉线并误杀 QQ
 * * * * * /opt/jmniang/napcat_watchdog.sh
 
 # qq_daily_restart.sh —— 每天 04:30 主动重启一次 QQ（清理长时间运行的内存泄漏）
