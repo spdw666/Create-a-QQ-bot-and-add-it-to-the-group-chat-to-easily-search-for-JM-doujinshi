@@ -860,7 +860,8 @@ FUN_TAGS = [
 
 def get_random_tag_album():
     """
-    今日属性：从标签池随机挑一个标签，搜索该标签并随机返回一本。
+    今日属性：从标签池随机挑一个标签，标签搜索第一页直接挑一本（零详情请求，<2秒）。
+    搜索页自带 (id, title)；无作者/章节数（渲染端兼容）。
 
     :return: dict{tag, id, title, author, chapter_count}；连续3次失败返回 None
     """
@@ -868,10 +869,16 @@ def get_random_tag_album():
 
     for _ in range(3):
         tag = random.choice(FUN_TAGS)
-        results = search_album(tag, max_count=5)
-        if results:
-            album = random.choice(results)
-            return {'tag': tag, **album}
+        try:
+            option = _apply_proxy(JmOption.default())
+            client = option.new_jm_client()
+            items = list(client.search_tag(tag).iter_id_title())
+        except Exception:
+            continue  # 该标签搜索失败，换下一个标签
+        if items:
+            aid, title = random.choice(items)
+            return {'tag': tag, 'id': str(aid), 'title': title or '',
+                    'author': '', 'chapter_count': 0}
     return None
 
 

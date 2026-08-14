@@ -515,19 +515,26 @@ async def fetch_image_with_api(api, img_ref):
 # ---------------------------------------------------------------- 核心业务
 
 async def monitor_progress(api, group_id, album_id, total_pages, download_task):
-    """轮询下载目录汇报进度：有总页数按 25%/50%/75% 报百分比；拿不到页数则每30秒报绝对进度"""
+    """轮询下载目录汇报进度：有总页数按 25%/50%/75% 报百分比；拿不到页数则每30秒报绝对进度。
+    进度消息最小间隔 10 秒（用户要求：不要频繁刷屏）"""
     task_dir = os.path.join(DOWNLOAD_DIR, str(album_id))
     reported = set()
     thresholds = [25, 50, 75]
     last_abs_report = 0.0
+    last_report = 0.0
     while not download_task.done():
         done = count_images(task_dir)
         now = time.monotonic()
+        if now - last_report < 10:
+            # 两次进度消息至少间隔10秒，防刷屏
+            await asyncio.sleep(3)
+            continue
         if total_pages > 0:
             pct = int(done * 100 / total_pages)
             for t in thresholds:
                 if pct >= t and t not in reported:
                     reported.add(t)
+                    last_report = now
                     try:
                         await api('send_group_msg', {
                             'group_id': group_id,
@@ -538,6 +545,7 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
         elif now - last_abs_report >= 30:
             # 降级：拿不到总页数时，每30秒报一次已下载张数
             last_abs_report = now
+            last_report = now
             try:
                 await api('send_group_msg', {
                     'group_id': group_id,
@@ -551,6 +559,13 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
 async def handle_jm_request(ws, api, group_id, user_id, album_id):
     """下载并上传一个漫画，负责回复群消息"""
     loop = asyncio.get_event_loop()
+    # 重复请求防护：同一漫画已在下载/上传流程中时不再重复发起（防 QQ 消息重推导致发两个包）
+    if album_id in ACTIVE_DOWNLOADS:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'⏳ 漫画 {album_id} 正在处理中，请稍等片刻…'
+        })
+        return
     try:
         # 1. 缓存命中则直接上传（旧缓存若未加密，现场转加密，否则QQ会拒收）
         cached_zip, cached_title = await loop.run_in_executor(None, find_cached_zip, album_id)
@@ -861,7 +876,6 @@ async def handle_message(ws, api, msg, bot_qq):
             'message': f'[CQ:at,qq={user_id}] 🎭 今日你的属性是【{escape_cq(info["tag"])}】！\n'
                        f'📕 附赠一本「{escape_cq(info["tag"])}」本子：\n'
                        f'《{escape_cq(info["title"])}》\n'
-                       f'✍️ 作者：{escape_cq(info["author"])}  章节：{info["chapter_count"]}章\n'
                        f'🔢 ID：{info["id"]}\n'
                        f'想要？@我 + 发送这个ID 即可打包下载'
         })
