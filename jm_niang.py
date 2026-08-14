@@ -680,12 +680,25 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         result = None
         last_err = ''
         for attempt in range(1, 6):
+            # 上传中每 10 秒报一次进度（用户要求：避免以为卡住）
+            upload_task = asyncio.create_task(api('upload_group_file', {
+                'group_id': group_id,
+                'file': zip_path,
+                'name': file_name,
+            }, timeout=1200))
+            waited = 0
+            while not upload_task.done():
+                await asyncio.sleep(10)
+                waited += 10
+                try:
+                    await api('send_group_msg', {
+                        'group_id': group_id,
+                        'message': f'📤 漫画 {album_id} 上传中…已等待 {waited} 秒'
+                    })
+                except Exception:
+                    pass
             try:
-                result = await api('upload_group_file', {
-                    'group_id': group_id,
-                    'file': zip_path,
-                    'name': file_name,
-                }, timeout=1200)
+                result = await upload_task
             except asyncio.TimeoutError:
                 last_err = '上传超时'
                 result = None
