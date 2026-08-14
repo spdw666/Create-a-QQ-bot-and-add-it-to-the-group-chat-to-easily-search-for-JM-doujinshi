@@ -201,6 +201,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_SAUCENAO_KEY` | ❌ | SauceNAO 识图 API key（免费注册 https://saucenao.com/user.php；未填时以图搜本仅用 iQDB 兜底）。Optional SauceNAO API key for reverse image search (free; without it only iQDB is used). |
 | `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped). |
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
+| `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
 
 ## 测试 Tests
 

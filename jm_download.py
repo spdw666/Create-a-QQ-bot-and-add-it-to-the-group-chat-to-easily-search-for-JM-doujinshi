@@ -442,6 +442,9 @@ SAUCENAO_KEY = os.environ.get('JM_SAUCENAO_KEY', '').strip()
 # 获取：console.cloud.google.com → 启用 Cloud Vision API → 凭据 → API 密钥）
 GOOGLE_KEY = os.environ.get('JM_GOOGLE_KEY', '').strip()
 
+# E-Hentai 登录 cookie（以图搜本；登录 e-hentai.org 后 F12 控制台执行 document.cookie 复制整串）
+EH_COOKIES = os.environ.get('JM_EH_COOKIES', '').strip()
+
 # Google Web Detection 的泛词（description 太泛，搜禁漫会命中无关本子，过滤掉）
 GOOGLE_IGNORE = {'manga', 'anime', 'comic', 'hentai', 'doujinshi', '同人誌', '同人志',
                  '漫画', 'アニメ', 'illustration', 'drawing', 'pixiv'}
@@ -493,17 +496,22 @@ def _sauce_search(img_bytes):
         out = []
         for res in j.get('results', []):
             h, d = res.get('header', {}), res.get('data', {})
-            # 提取全部可用搜索词字段（title/jp_name/eng_name/source/creator/author_name/member_name）
-            kws = []
+            # 提取全部可用搜索词字段；作者类字段单独归类（后续走 search_author_album 作者匹配）
+            kws, authors = [], []
             for key in ('title', 'jp_name', 'eng_name', 'source', 'member_name',
                         'author_name', 'creator'):
                 v = d.get(key)
+                vals = []
                 if isinstance(v, str) and v.strip():
-                    kws.append(v.strip())
+                    vals.append(v.strip())
                 elif isinstance(v, list):
-                    kws.extend(str(x).strip() for x in v if str(x).strip())
+                    vals.extend(str(x).strip() for x in v if str(x).strip())
+                if key in ('member_name', 'author_name', 'creator'):
+                    authors.extend(vals)
+                else:
+                    kws.extend(vals)
             out.append((float(h.get('similarity', 0)), kws,
-                        (d.get('ext_urls') or [''])[0]))
+                        (d.get('ext_urls') or [''])[0], authors))
         return out
     except Exception:
         return []
@@ -533,6 +541,35 @@ def _google_web_search(img_bytes):
             if desc and desc.lower() not in GOOGLE_IGNORE:
                 out.append((float(e.get('score', 0)), [desc]))
         return out[:10]
+    except Exception:
+        return []
+
+
+def _ehentai_search(img_bytes):
+    """E-Hentai 以图搜本（需 JM_EH_COOKIES 登录 cookie）。返回 [(title, url)]，失败返回 []。
+    注意：EH 只支持彩色图（封面/CG），黑白漫画内页搜不了；免费账号有日额度"""
+    if not EH_COOKIES:
+        return []
+    try:
+        import requests
+        r = requests.post('https://upld.e-hentai.org/image_lookup.php',
+                          files={'sfile': ('img.jpg', img_bytes, 'image/jpeg')},
+                          data={'f_sfile': 'File Search'},
+                          headers={'Cookie': EH_COOKIES,
+                                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
+                          timeout=60)
+        html = r.text
+        out = []
+        # 有结果页：gallery 链接 + 附近标题文本；<a href=".../g/<id>/<token>/">
+        for m in re.finditer(
+                r'<a[^>]*href="(https://e-hentai\.org/g/(\d+)/([0-9a-f]+)/?)"[^>]*>(.*?)</a>',
+                html, re.S):
+            url, title = m.group(1), re.sub(r'<[^>]+>', ' ', m.group(4))
+            title = re.sub(r'\s+', ' ', title).strip()
+            out.append((title[:150], url))
+            if len(out) >= 3:
+                break
+        return out
     except Exception:
         return []
 
@@ -681,18 +718,31 @@ def search_by_image(img_bytes):
                 'matches': matches[:5],
                 'ocr_texts': ocr_texts[:6],
             }
-    # 2. 视觉识图（SauceNAO + Google + iQDB）兜底
+    # 2. 视觉识图（SauceNAO + Google + E-Hentai + iQDB 四路并发，总耗时=最慢一路，60s 总超时内全部出结果）
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        f_sauce = pool.submit(_sauce_search, img_bytes)
+        f_google = pool.submit(_google_web_search, img_bytes)
+        f_eh = pool.submit(_ehentai_search, img_bytes)
+        f_iqdb = pool.submit(_iqdb_search, img_bytes)
+        sauce_results = f_sauce.result()
+        google_results = f_google.result()
+        eh_results = f_eh.result()
+        iqdb_results = f_iqdb.result()
     candidates = []  # (kws, url) 展示候选
-    match_candidates = []  # 参与禁漫匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
-    for sim, kws, url in _sauce_search(img_bytes):
+    match_candidates = []  # 参与禁漫标题匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
+    author_candidates = []  # 参与禁漫作者匹配的候选（SauceNAO 作者字段）
+    for sim, kws, url, authors in sauce_results:
         # doujinshi 封面经裁剪/压缩/加水印后相似度普遍 40-60%，≥40 纳入展示
         if sim >= 40 and kws:
             candidates.append((kws, url))
             if sim >= 55:
                 match_candidates.append(kws)
+                if authors:
+                    author_candidates.append(authors)
             if len(candidates) >= 3:
                 break
-    for score, kws in _google_web_search(img_bytes):
+    for score, kws in google_results:
         # Google webEntities score 为相关度（可>1）；≥1.0 为强匹配才参与禁漫搜索，防泛词误搜
         if kws and score >= 0.6:
             candidates.append((kws, ''))
@@ -700,7 +750,12 @@ def search_by_image(img_bytes):
                 match_candidates.append(kws)
             if len(candidates) >= 5:
                 break
-    for title, url in _iqdb_search(img_bytes):
+    for title, url in eh_results:
+        candidates.append(([title], url))
+        match_candidates.append([title])
+        if len(candidates) >= 5:
+            break
+    for title, url in iqdb_results:
         candidates.append(([title], url))
         match_candidates.append([title])
         if len(candidates) >= 5:
@@ -726,11 +781,19 @@ def search_by_image(img_bytes):
                 'llm_words': llm_words[:6],
             }
         return None
-    # 识图关键词 → 禁漫搜索（四层变体自动生效）
+    # 识图关键词 → 禁漫搜索（四层变体自动生效）；标题优先，作者名补充（作者候选走 search_author_album）
     matches, seen = [], set()
     for kws in match_candidates[:5]:
         for kw in kws[:3]:
             for r in (search_album(kw, max_count=3) or []):
+                if r['id'] not in seen:
+                    seen.add(r['id'])
+                    matches.append(r)
+        if len(matches) >= 5:
+            break
+    for authors in author_candidates[:3]:
+        for a in authors[:2]:
+            for r in (search_author_album(a, max_count=3) or []):
                 if r['id'] not in seen:
                     seen.add(r['id'])
                     matches.append(r)
