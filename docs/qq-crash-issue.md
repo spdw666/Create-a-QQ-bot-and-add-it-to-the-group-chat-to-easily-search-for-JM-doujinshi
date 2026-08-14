@@ -48,7 +48,7 @@
 | 换 QQ 旧版 3.2.23-44343 / 3.2.27-47256 | ❌ 无法获取 | 腾讯已下架全部旧版安装包（dldir1/dldir1v6/qqdl.gtimg 全线 404） |
 | o3HookMode=0（社区假死修复） | 未试 | 待下次验证 |
 | **NapCat 反检测 bypass 六项**（hook/window/module/process/container/js） | ⏳ 已开启观察中（2026-08-14 19:07 生效） | 需改**账号级配置** `napcat_<QQ号>.json`（主配置会被覆盖）；开启后 `-q` 快速登录成功、token 不再被清 |
-| **升级 QQ 3.2.32-52194**（腾讯 2026-08-10 发布的最新 Linux 版） | ⏳ 已部署观察中（2026-08-14 19:24 上线） | 官方直链 qqdl.gtimg.cn；替换流程含 NapCat 注入与反检测配置迁移；-q 免扫码登录成功；回滚备份 QQ_50969_crashbak |
+| **升级 QQ 3.2.32-52194**（腾讯 2026-08-10 发布的最新 Linux 版） | ❌ 不兼容已回滚 | NapCat 4.18.18 报"PacketBackend 不支持当前QQ版本架构：3.2.32-52194-x64"（NapCat 未适配 8-10 新版）；等待 NapCat 新版本适配后重试，回滚备份仍在 QQ_332_incompatible |
 
 ## 2026-08-14 晚进展 Update（19:15）
 
