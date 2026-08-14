@@ -565,8 +565,35 @@ def _fmt_duration(sec):
     return ''.join(parts)
 
 
+def _qq_process_etime():
+    """QQ 进程存活时长（Linux ps 查询；失败/非 Linux 返回 None）"""
+    try:
+        import subprocess
+        out = subprocess.run(['ps', '-eo', 'etime,args'], capture_output=True,
+                             text=True, timeout=5).stdout
+        for line in out.splitlines():
+            if '/root/Napcat/opt/QQ/qq --no-sandbox' in line:
+                return line.split()[0]  # HH:MM:SS 或 D-HH:MM:SS
+    except Exception:
+        pass
+    return None
+
+
+def _parse_etime(t):
+    """ps etime 文本 → 秒；解析失败返回 None"""
+    try:
+        if '-' in t:
+            d, rest = t.split('-')
+            h, m, s = rest.split(':')
+            return int(d) * 86400 + int(h) * 3600 + int(m) * 60 + int(s)
+        h, m, s = t.split(':')
+        return int(h) * 3600 + int(m) * 60 + int(s)
+    except Exception:
+        return None
+
+
 def render_self_check():
-    """自查报告：进程启动时刻/运行时长 + 当前 NapCat 连接时刻/时长"""
+    """自查报告：进程启动时刻/运行时长 + 当前 NapCat 连接时长 + QQ 进程真实存活（部署不重置）"""
     start_txt = datetime.datetime.fromtimestamp(START_TIME).strftime('%m-%d %H:%M:%S')
     lines = [f'🤖 自查报告：',
              f'· 机器人进程：自 {start_txt} 启动，已运行 {_fmt_duration(time.time() - START_TIME)}']
@@ -575,6 +602,9 @@ def render_self_check():
         lines.append(f'· 当前QQ连接：自 {conn_txt} 建立，已在线 {_fmt_duration(time.time() - CUR_CONN_TIME)}')
     else:
         lines.append('· 当前QQ连接：尚未建立')
+    secs = _parse_etime(_qq_process_etime() or '')
+    if secs is not None:
+        lines.append(f'· QQ进程存活：{_fmt_duration(secs)}（未被重启）')
     return '\n'.join(lines)
 
 
