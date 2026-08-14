@@ -1306,6 +1306,23 @@ async def handle_connection(ws):
                     fut.set_result(msg)
             elif msg.get('post_type') == 'message':
                 asyncio.create_task(handle_message(ws, api, msg, bot_qq_box[0]))
+            elif (msg.get('post_type') == 'request' and msg.get('request_type') == 'group'
+                  and msg.get('sub_type') == 'invite'):
+                # 自动同意群邀请（进群后发欢迎消息）
+                try:
+                    await api('set_group_add_request', {
+                        'flag': msg.get('flag', ''),
+                        'sub_type': 'invite',
+                        'approve': True,
+                    }, timeout=10)
+                    log(f"已同意入群邀请: group_id={msg.get('group_id')}")
+                    await asyncio.sleep(2)
+                    await api('send_group_msg', {
+                        'group_id': msg.get('group_id'),
+                        'message': '大家好，我是 JM娘～发「说明」查看我能做什么！',
+                    }, timeout=10)
+                except Exception as e:
+                    log(f'处理群邀请失败: {e!r}')
             elif msg.get('post_type') == 'meta_event' and msg.get('meta_event_type') == 'heartbeat':
                 pass  # 心跳忽略
 
