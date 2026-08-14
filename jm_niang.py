@@ -532,47 +532,43 @@ def render_task_status():
 
 
 async def monitor_progress(api, group_id, album_id, total_pages, download_task):
-    """轮询下载目录汇报进度：有总页数按 25%/50%/75% 报百分比；拿不到页数则每30秒报绝对进度。
-    进度消息最小间隔 10 秒（用户要求：不要频繁刷屏）"""
+    """定时汇报下载进度：每 10 秒输出一次当前进度（用户要求）；下载完成后打包阶段发一次性提示"""
     task_dir = os.path.join(DOWNLOAD_DIR, str(album_id))
-    reported = set()
-    thresholds = [25, 50, 75]
-    last_abs_report = 0.0
     last_report = 0.0
+    zip_notified = False
     while not download_task.done():
         done = count_images(task_dir)
         if album_id in ACTIVE_TASKS:
             ACTIVE_TASKS[album_id]['done'] = done
         now = time.monotonic()
-        if now - last_report < 10:
-            # 两次进度消息至少间隔10秒，防刷屏
-            await asyncio.sleep(3)
-            continue
-        if total_pages > 0:
-            pct = int(done * 100 / total_pages)
-            for t in thresholds:
-                if pct >= t and t not in reported:
-                    reported.add(t)
-                    last_report = now
-                    try:
-                        await api('send_group_msg', {
-                            'group_id': group_id,
-                            'message': f'⏳ 漫画 {album_id} 下载中… {pct}%（{done}/{total_pages}）'
-                        })
-                    except Exception:
-                        pass
-        elif now - last_abs_report >= 30:
-            # 降级：拿不到总页数时，每30秒报一次已下载张数
-            last_abs_report = now
-            last_report = now
+        # 打包阶段：页数下载完成但任务未结束（ZIP 加密压缩需 1-2 分钟），发一次性提示
+        if total_pages > 0 and done >= total_pages and not zip_notified:
+            zip_notified = True
             try:
                 await api('send_group_msg', {
                     'group_id': group_id,
-                    'message': f'📥 漫画 {album_id} 下载中… 已下载 {done} 张图（本子较大请耐心等待）'
+                    'message': f'📦 漫画 {album_id} 下载完成，正在打包ZIP（加密压缩约需1-2分钟）…'
                 })
             except Exception:
                 pass
-        await asyncio.sleep(5)
+            continue
+        if now - last_report >= 10:
+            last_report = now
+            try:
+                if total_pages > 0:
+                    pct = int(done * 100 / total_pages)
+                    await api('send_group_msg', {
+                        'group_id': group_id,
+                        'message': f'⏳ 漫画 {album_id} 下载中… {pct}%（{done}/{total_pages}）'
+                    })
+                else:
+                    await api('send_group_msg', {
+                        'group_id': group_id,
+                        'message': f'📥 漫画 {album_id} 下载中… 已下载 {done} 张图（本子较大请耐心等待）'
+                    })
+            except Exception:
+                pass
+        await asyncio.sleep(3)
 
 
 async def handle_jm_request(ws, api, group_id, user_id, album_id):
@@ -647,10 +643,7 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
                 })
                 return
 
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': f'📦 下载完成，正在打包ZIP…'
-            })
+            # 打包提示已由 monitor_progress 在打包开始时发送，此处不重复
 
         size = os.path.getsize(zip_path)
         file_name = os.path.basename(zip_path)
