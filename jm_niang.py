@@ -221,7 +221,8 @@ def render_search_page(state, page):
     start = (page - 1) * PAGE_SIZE
     lines = [f'{state["head"]}（第 {page}/{total_pages} 页 · 共 {total} 本）：']
     for i, r in enumerate(results[start:start + PAGE_SIZE], start + 1):
-        lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
+        chap = f' 章节：{r["chapter_count"]}章' if r.get('chapter_count') else ''
+        lines.append(f'{i}. 《{escape_cq(r["title"])}》{chap}\n'
                      f'   🔢 ID：{r["id"]}')
     if page < total_pages:
         lines.append('💡 直接发「下一页」翻页，或发「第N页」跳转（无需@我）')

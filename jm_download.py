@@ -817,13 +817,11 @@ RANK_METHODS = {'day': 'day_ranking', 'week': 'week_ranking', 'month': 'month_ra
 
 def get_ranking(rank_type, max_pages=3):
     """
-    排行榜（day/week/month）：拉前 max_pages 页（每页约24本）并发取详情，返回全量结果。
-    榜单无变体概念，直接复用搜索的并发详情模式。
+    排行榜（day/week/month）：只拉榜单页（自带标题/标签），**零详情请求**，3 页 <3 秒。
+    榜单页无作者/章节数字段（值为空），渲染端做兼容。
 
     :return: list[dict{id,title,author,chapter_count}]；请求失败返回 None
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     method = RANK_METHODS.get(rank_type)
     if not method:
         return None
@@ -833,41 +831,22 @@ def get_ranking(rank_type, max_pages=3):
         rank_fn = getattr(client, method)
     except Exception:
         return None
-    ids, seen = [], set()
+    results, seen = [], set()
     for page in range(1, max_pages + 1):
         try:
-            new_ids = list(rank_fn(page=page).iter_id())
+            items = list(rank_fn(page=page).iter_id_title_tag())
         except Exception:
             break  # 该榜单没有更多页或请求失败
-        if not new_ids:
+        if not items:
             break
-        for aid in new_ids:
-            if aid not in seen:
-                seen.add(aid)
-                ids.append(aid)
+        for aid, title, tags in items:
+            if aid in seen:
+                continue
+            seen.add(aid)
+            results.append({'id': str(aid), 'title': title or '',
+                            'author': '', 'chapter_count': 0})
     # ponytail: 截断120本（与搜索一致，翻页够用）
-    ids = ids[:120]
-
-    def _fetch(aid):
-        try:
-            opt = _apply_proxy(JmOption.default())
-            c = opt.new_jm_client()
-            detail = c.get_album_detail(aid)
-        except Exception:
-            return None
-        return {
-            'id': str(detail.id),
-            'title': detail.title,
-            'author': detail.author,
-            'chapter_count': len([p for p in detail]),
-        }
-
-    results = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for r in ex.map(_fetch, ids):
-            if r:
-                results.append(r)
-    return results
+    return results[:120]
 
 
 # 今日属性标签池（随机抽一个标签，搜该标签随机附赠一本）
