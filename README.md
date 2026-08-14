@@ -148,6 +148,20 @@ See [Deployment](#详细部署-deployment) below for the full setup (NapCat conf
 
 Install NapCat for your platform (see official docs), log in with the bot's QQ account (scan the QR once), then create an OneBot v11 **forward WebSocket server** on `ws://127.0.0.1:8081`. Optionally raise `uploadSpeedKBps`.
 
+**反检测配置（重要）**：QQ 会检测 NapCat 的注入特征并判定为"设备存外挂"强制下线。必须开启 NapCat 反检测开关——注意要改**账号级配置** `config/napcat_<QQ号>.json`（主配置 `napcat.json` 会被它覆盖；改完看启动日志 `[Core] [Config] 配置文件…加载` 确认生效）：
+
+**Anti-detection config (important)**: QQ detects NapCat's injected hooks and force-logs-out the device as "plugin abuse". You must enable NapCat's bypass flags — in the **per-account config** `config/napcat_<uin>.json` (the main `napcat.json` is overridden by it; verify via the startup log line `[Core] [Config] 配置文件…加载`):
+
+```json
+{
+  "o3HookMode": 1,
+  "bypass": {
+    "hook": true, "window": true, "module": true,
+    "process": true, "container": true, "js": true
+  }
+}
+```
+
 ### 2. 配置机器人 Configure
 
 敏感值通过**环境变量**读取（不写死在代码里），参考 [`.env.example`](.env.example)。
