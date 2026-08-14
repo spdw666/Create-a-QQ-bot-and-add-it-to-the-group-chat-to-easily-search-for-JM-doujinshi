@@ -689,6 +689,8 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             waited = 0
             while not upload_task.done():
                 await asyncio.sleep(10)
+                if upload_task.done():
+                    break  # sleep 期间上传已完成（文件已出），不再补发进度
                 waited += 10
                 try:
                     await api('send_group_msg', {
