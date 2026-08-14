@@ -534,14 +534,19 @@ async def fetch_image_with_api(api, img_ref):
 
 # ---------------------------------------------------------------- 核心业务
 
-async def _group_file_exists(api, group_id, file_name):
-    """查询群文件根目录列表，判断目标文件是否已存在（上传事件确认超时的假失败检测）"""
-    try:
-        resp = await api('get_group_root_files', {'group_id': group_id}, timeout=30)
-        files = (resp.get('data') or {}).get('files') or []
-        return any((f.get('file_name') or f.get('name')) == file_name for f in files)
-    except Exception:
-        return False
+async def _group_file_exists(api, group_id, file_name, retries=2, delay=6):
+    """查询群文件根目录列表，判断目标文件是否已存在（上传事件确认超时的假失败检测）
+    带重试：上传完成到文件出现在群文件列表之间有延迟（QQ 后台写入），立即查会误判失败"""
+    for _ in range(retries):
+        try:
+            resp = await api('get_group_root_files', {'group_id': group_id}, timeout=30)
+            files = (resp.get('data') or {}).get('files') or []
+            if any((f.get('file_name') or f.get('name')) == file_name for f in files):
+                return True
+        except Exception:
+            pass
+        await asyncio.sleep(delay)
+    return False
 
 
 def render_task_status():
@@ -886,7 +891,7 @@ async def handle_apk_request(api, group_id):
         await api('send_group_msg', {'group_id': group_id, 'message': msg})
     else:
         link = publish_http_link(zip_path)
-        msg = '⚠️ 安装包上传群文件失败'
+        msg = '⚠️ 群文件上传状态未知，请查看群文件；若没有收到，可用下方链接下载'
         if link:
             msg += f'\n🌐 浏览器下载：{link}'
         await api('send_group_msg', {'group_id': group_id, 'message': msg})
