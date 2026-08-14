@@ -209,7 +209,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped). |
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 | `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
-| `JM_NOTIFY_GROUP` | ❌ | 掉线恢复通知群（QQ 群号；NapCat 重连成功时发"已恢复上线"通知，默认 `810152420`）。Group ID for "back online" notifications after reconnect (default `810152420`). |
+| `JM_NOTIFY_GROUP` | ❌ | 掉线汇总报告群（QQ 群号；cron 脚本每 2 小时汇总掉线/重连情况发到此群，默认 `810152420`）。Group ID for the 2-hourly offline summary report (default `810152420`). |
 
 ## 运维 Operations
 
@@ -226,9 +226,9 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
-> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟持续恶化中），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。恢复后机器人会向 `JM_NOTIFY_GROUP` 每 2 小时汇总一次掉线报告。
+> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟持续恶化中），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。`napcat_offline_report.py` 由 cron 每 2 小时从 journalctl 统计重连次数，汇总报告发到 `JM_NOTIFY_GROUP`（独立于 jmniang 进程，部署重启不影响统计）。
 >
-> 💡 *How it works: the Linux QQ client crashes periodically (~every 30 min). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15 s total). On recovery the bot notifies `JM_NOTIFY_GROUP` and @-apologizes to users who mentioned it while offline.*
+> 💡 *How it works: the Linux QQ client crashes periodically (~every 30 min). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15 s total). `napcat_offline_report.py` (cron, every 2 h) counts reconnects from journalctl and sends a summary to `JM_NOTIFY_GROUP` — independent of the jmniang process, so deploys don't reset the stats.*
 
 ### 无感部署 Zero-downtime deploys
 
@@ -310,6 +310,8 @@ napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉
                      # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (token-based quick login)
 qq_daily_restart.sh  # 每日 04:30 重启 QQ，清理长时间运行的内存泄漏
                      # daily 04:30 QQ restart to clear long-running memory leaks
+napcat_offline_report.py  # cron 每 2 小时从 journalctl 统计重连次数，掉线汇总报告发到通知群
+                          # cron job (every 2 h): counts reconnects from journalctl, posts offline summary to the notify group
 test_jm_download.py  # 离线单元测试（15 项）· offline unit tests (15 cases)
 .env.example         # 环境变量示例 · environment variable template
 start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
