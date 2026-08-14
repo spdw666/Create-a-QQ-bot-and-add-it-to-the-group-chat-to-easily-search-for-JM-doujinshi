@@ -183,7 +183,7 @@ HELP_WORDS = {'说明', '帮助', 'help', '使用说明', 'usage', '菜单', '�
 CANCEL_WORDS = {'取消', '停止', 'stop', 'cancel', '算了'}
 
 # 随机推荐类命令词
-RANDOM_WORDS = {'随机', '抽一本', '推荐', '来一本', '随缘', 'random'}
+RANDOM_WORDS = {'随机', '抽一本', '推荐', '来一本', '随缘', 'random', '随机推荐', '随机来一本'}
 
 # 今日属性命令词
 TAG_WORDS = {'今日属性', '属性', 'today'}
@@ -895,7 +895,7 @@ async def handle_message(ws, api, msg, bot_qq):
         return
 
     # 随机推荐：@机器人 + 随机/抽一本 等 → 近30天热门随机一本
-    if text.lower() in RANDOM_WORDS:
+    if text.lower() in RANDOM_WORDS or text.lower().startswith('随机'):
         if search_cooldown_hit(group_id):
             await api('send_group_msg', {
                 'group_id': group_id,
