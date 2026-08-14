@@ -566,6 +566,7 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             'message': f'⏳ 漫画 {album_id} 正在处理中，请稍等片刻…'
         })
         return
+    ACTIVE_DOWNLOADS.append(album_id)  # 立即占位，消除并发窗口（防双任务双份进度）
     try:
         # 1. 缓存命中则直接上传（旧缓存若未加密，现场转加密，否则QQ会拒收）
         cached_zip, cached_title = await loop.run_in_executor(None, find_cached_zip, album_id)
@@ -605,20 +606,15 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
                     'message': f'开始下载漫画 {album_id}（获取信息失败，无预览）…'
                 })
 
-            # 3. 登记活跃任务，启动下载 + 进度轮询
-            ACTIVE_DOWNLOADS.append(album_id)
-            try:
-                download_task = loop.create_task(
-                    asyncio.to_thread(download_album_to_zip, album_id)
-                )
-                progress_task = loop.create_task(
-                    monitor_progress(api, group_id, album_id, total_pages, download_task)
-                )
-                zip_path, title = await download_task
-                await progress_task
-            finally:
-                if album_id in ACTIVE_DOWNLOADS:
-                    ACTIVE_DOWNLOADS.remove(album_id)
+            # 3. 启动下载 + 进度轮询（活跃任务已在入口登记占位）
+            download_task = loop.create_task(
+                asyncio.to_thread(download_album_to_zip, album_id)
+            )
+            progress_task = loop.create_task(
+                monitor_progress(api, group_id, album_id, total_pages, download_task)
+            )
+            zip_path, title = await download_task
+            await progress_task
 
             # 4. 下载期间被取消：清理残留并回复
             if album_id in CANCELLED_ALBUMS:
@@ -705,6 +701,9 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             'message': f'❌ 漫画 {album_id} 处理失败：{e}\n'
                        f'可能原因：ID不存在/已删除、网络波动、禁漫拦截。'
         })
+    finally:
+        if album_id in ACTIVE_DOWNLOADS:
+            ACTIVE_DOWNLOADS.remove(album_id)
 
 
 async def _search_image_with_timeout(img_bytes, timeout=60):
