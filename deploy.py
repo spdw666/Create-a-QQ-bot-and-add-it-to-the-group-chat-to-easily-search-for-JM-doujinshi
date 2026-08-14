@@ -4,6 +4,7 @@
 流程：起维护应答器 → 停 JM娘 → 上传(独立连接) → 起 JM娘 → 关维护应答器
 异常安全：任何步骤失败都会尝试恢复 JM娘 并关闭应答器
 """
+import os
 import sys
 import time
 
@@ -11,13 +12,29 @@ import paramiko
 
 HOST = '64.90.13.42'
 USER = 'root'
-PASS = 'REDACTED'
+# 密码从本地 secret 文件读取（不入库）；文件路径：仓库根目录/.deploy_secret
+SECRET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.deploy_secret')
+
+
+def get_pass():
+    try:
+        with open(SECRET_FILE, encoding='utf-8') as f:
+            p = f.read().strip()
+        if p:
+            return p
+    except OSError:
+        pass
+    env_p = os.environ.get('JM_SERVER_PASS')
+    if env_p:
+        return env_p
+    print(f'错误：找不到服务器密码。请创建 {SECRET_FILE} 写入密码，或设置环境变量 JM_SERVER_PASS')
+    sys.exit(1)
 
 
 def connect():
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(HOST, username=USER, password=PASS, timeout=30)
+    ssh.connect(HOST, username=USER, password=get_pass(), timeout=30)
     ssh.get_transport().set_keepalive(10)
     return ssh
 

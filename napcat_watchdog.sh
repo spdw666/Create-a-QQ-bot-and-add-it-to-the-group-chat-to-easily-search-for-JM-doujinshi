@@ -3,6 +3,7 @@
 MARK=/tmp/napcat_watchdog_mark
 if ! ss -tln 2>/dev/null | grep -q ':8081 '; then
   if [ -f "$MARK" ] && [ $(( $(date +%s) - $(stat -c %Y "$MARK") )) -lt 600 ]; then
+    echo "$(date '+%F %T') 8081 down but in cooldown, skip" >> /var/log/napcat_watchdog.log
     exit 0
   fi
   touch "$MARK"

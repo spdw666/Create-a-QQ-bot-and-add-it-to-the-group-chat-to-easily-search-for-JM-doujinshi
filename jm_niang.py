@@ -712,16 +712,19 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
                 result = None
 
             retcode = result.get('retcode') if result else None
-            if retcode in (0, None):
+            if retcode == 0:
                 break
-            # 假失败检测：事件确认超时但文件可能已传上，查群文件根目录
-            if await _group_file_exists(api, group_id, file_name):
+            # 超时/非0 retcode：先做假失败检测（事件确认失败但文件可能已传上）
+            exists = await _group_file_exists(api, group_id, file_name)
+            if exists is True:
                 log(f'上传事件确认失败但群文件已存在（假失败），视为成功: {file_name}')
                 result = {'retcode': 0}
                 break
-            # 查列表 API 异常（files 空 + retcode 非0）：QQ 端状态不稳，不再重试（防重复文件）
-            log(f'上传失败(第{attempt}次)且群文件列表不可用，停止重试（防重复上传）')
-            break
+            if attempt >= 2:
+                log(f'上传失败(第{attempt}次): {last_err or retcode}')
+                break
+            log(f'上传失败(第{attempt}次): {last_err or retcode}，8秒后重试…')
+            await asyncio.sleep(8)
 
         retcode = result.get('retcode') if result else None
         if retcode in (0, None):
@@ -840,7 +843,7 @@ async def handle_message(ws, api, msg, bot_qq):
         # 掉线期间补推的 @ 消息（time 早于重连时刻）：先 @回 用户道歉
         msg_time = msg.get('time') or 0
         now = time.time()
-        if msg_time < OFFLINE_MARK and now - APOLOGY_SENT.get(group_id, 0) > 60:
+        if msg_time > 0 and msg_time < OFFLINE_MARK and now - APOLOGY_SENT.get(group_id, 0) > 60:
             APOLOGY_SENT[group_id] = now
             try:
                 await api('send_group_msg', {
@@ -1367,9 +1370,10 @@ async def offline_report_task():
             await asyncio.sleep(2 * 3600)
             now = time.time()
             window = [t for t in OFFLINE_EVENTS if now - t <= 2 * 3600 + 60]
+            # 清理过期条目（防长期累积）
+            OFFLINE_EVENTS[:] = [t for t in OFFLINE_EVENTS if now - t <= 2 * 3600 + 60]
             if not window:
                 continue  # 2小时内没掉线，安静
-            OFFLINE_EVENTS[:] = [t for t in OFFLINE_EVENTS if t not in window]
             n = len(window)
             if n == 1:
                 interval_text = f'（约 {int((now - window[0]) / 60)} 分钟前恢复）'
@@ -1379,15 +1383,21 @@ async def offline_report_task():
                 interval_text = f'，平均每隔约 {avg_min} 分钟掉线一次'
             msg = f'📊 掉线报告（过去2小时）：共掉线 {n} 次{interval_text}。当前已恢复在线 ✅'
             # 独立 WS 连接发送（不依赖 handle_connection 的 api 闭包）
-            import json as _json
-            import uuid as _uuid
             async with websockets.connect(f'ws://{WS_HOST}:{WS_PORT}') as ws:
-                await ws.send(_json.dumps({
+                echo = str(uuid.uuid4())
+                await ws.send(json.dumps({
                     'action': 'send_group_msg',
                     'params': {'group_id': NOTIFY_GROUP, 'message': msg},
-                    'echo': str(_uuid.uuid4()),
+                    'echo': echo,
                 }))
-                await asyncio.wait_for(ws.recv(), timeout=15)
+                # 等到 echo 匹配的响应，确认发送动作已被处理
+                try:
+                    while True:
+                        resp = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
+                        if resp.get('echo') == echo:
+                            break
+                except (asyncio.TimeoutError, json.JSONDecodeError):
+                    pass
             log(f'掉线报告已发: {n}次')
         except Exception as e:
             log(f'掉线报告任务出错: {e!r}')

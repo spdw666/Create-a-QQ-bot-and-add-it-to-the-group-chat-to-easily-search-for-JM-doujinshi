@@ -24,3 +24,4 @@ start_napcat.bat
 
 # 临时监控脚本（不入仓库）
 _monitor.py
+.deploy_secret
