@@ -243,9 +243,9 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
-> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟恶化，另有腾讯风控因素，详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)），watchdog 轮询 `ss -tln | grep :8081` 检测掉线（每 1 分钟一次），用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，拉起约 15-30 秒；10 分钟冷却期内不重复拉起）。`napcat_offline_report.py` 由 cron 每 2 小时从 journalctl 统计重连次数，汇总报告发到 `JM_NOTIFY_GROUP`（独立于 jmniang 进程，部署重启不影响统计）。
+> 💡 **原理（懂行版）**：QQ Linux 客户端会周期性崩溃（此前误以为间隔 30→20→10 分钟恶化——**真相是 watchdog 误杀**：v4/v5 用裸 `ss` 检测，用户 crontab PATH 不含 /usr/sbin 导致永远误判掉线、冷却结束就杀 QQ，周期数=冷却时间变化；v6 改 `/usr/sbin/ss` 绝对路径后已修复）。另有腾讯风控因素（详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)）。watchdog 每 1 分钟检测 8081，掉线用 `-q <QQ号>` 快速登录拉起（token 有效即免扫码，拉起约 15-30 秒；10 分钟冷却期内不重复拉起）。`napcat_offline_report.py` 由 cron 每 2 小时从 journalctl 统计重连次数，汇总报告发到 `JM_NOTIFY_GROUP`（独立于 jmniang 进程，部署重启不影响统计）。
 >
-> 💡 *How it works: the Linux QQ client crashes periodically (intervals shrank 30→20→10 min, compounded by Tencent risk-control; see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15-30 s to come up; it does not relaunch again within the 10-min cooldown). `napcat_offline_report.py` (cron, every 2 h) counts reconnects from journalctl and sends a summary to `JM_NOTIFY_GROUP` — independent of the jmniang process, so deploys don't reset the stats.*
+> 💡 *How it works: the Linux QQ client crashes periodically (the previously assumed 30→20→10-min worsening was actually the watchdog killing QQ: v4/v5 used bare `ss` which is absent from the user crontab PATH, so every check misdetected "down" and killed QQ once the cooldown lapsed; v6 uses the absolute path `/usr/sbin/ss` and fixes this). Tencent risk-control is also a factor (see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15-30 s to come up; no relaunch within the 10-min cooldown). `napcat_offline_report.py` (cron, every 2 h) counts reconnects from journalctl and sends a summary to `JM_NOTIFY_GROUP` — independent of the jmniang process, so deploys don't reset the stats.*
 
 ### 无感部署 Zero-downtime deploys
 
@@ -281,8 +281,8 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 | Group file upload fails | QQ scans ZIP contents and rejects adult images → keep `ZIP_ENCRYPT = True` (AES-128); users need WinRAR / 7-Zip / ZArchiver |
 | 明明存在的本子搜不到 | 站内搜索是精确子串匹配；4 层降级已覆盖简体/繁体/日文写法，但超冷门单字组合仍可能漏（见 `_search_by_core_chars`） |
 | Search misses a known title | Site search is exact substring matching; the 4-layer fallback covers most cases, but ultra-rare combos may still miss (see `_search_by_core_chars`) |
-| 机器人周期性掉线（间隔曾 30→20→10 分钟递减） | QQ Linux 客户端自身 bug + 腾讯风控叠加（详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)）；watchdog 每分钟检测 + `-q` 快速登录拉起（约 1-2 分钟恢复，10 分钟冷却），NapCat 反检测 bypass 已开启（见[部署](#详细部署-deployment)） |
-| Bot drops offline periodically (intervals shrank 30→20→10 min) | Linux QQ client bug compounded by Tencent risk-control (see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)); watchdog polls every minute and relaunches with `-q` quick login (~1-2 min recovery, 10-min cooldown), NapCat anti-detection bypass enabled (see [Deployment](#详细部署-deployment)) |
+| 机器人周期性掉线（间隔曾 30→20→10 分钟递减） | **已查明：watchdog v4/v5 误杀**——裸 `ss` 在用户 crontab PATH 中不存在 → 永远误判 8081 down → 冷却结束就杀 QQ（周期数=冷却时间变化）；v6 改用 `/usr/sbin/ss` 绝对路径修复。真掉线另有：腾讯风控踢号（反检测 bypass 已开启应对）。详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md) |
+| Bot drops offline periodically (intervals shrank 30→20→10 min) | **Root cause found: watchdog v4/v5 killed QQ by mistake** — bare `ss` is not in the user-crontab PATH, so every check misdetected 8081 as down and killed QQ once the cooldown lapsed; v6 uses `/usr/sbin/ss` and fixes it. Real drop-offs also come from Tencent risk-control (anti-detection bypass enabled). See [docs/qq-crash-issue.md](docs/qq-crash-issue.md) |
 | 群里出现两个同名文件 | 已修复：上传失败重试前会查群文件列表去重，列表 API 异常时停止重试（重试上限 2 次） |
 | Duplicate files appear in group | Fixed: the uploader checks the group file list before retrying, and stops retrying if the list API is broken (max 2 attempts) |
 
@@ -292,7 +292,7 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 A：是部署时配置的 `JM_ZIP_PASSWORD`。必须加密——QQ 会扫描 ZIP 内容并静默删除成人图片（实测未加密 `retcode=1200` 上传失败，AES-128 加密后 `retcode=0` 正常）。用 WinRAR / 7-Zip / ZArchiver 解压即可。
 
 **Q：为什么机器人偶尔掉线？**
-A：QQ Linux 客户端本身有周期性崩溃 bug（间隔 30→20→10 分钟恶化，另有腾讯风控因素），与项目代码无关。机器人已配备看门狗自动恢复（约 1-2 分钟，`-q` 快速登录免扫码），恢复后每 2 小时向通知群汇总一次掉线报告。
+A：曾查出两大原因：① watchdog v4/v5 误杀（裸 `ss` 不在 crontab PATH → 误判掉线 → 冷却结束杀 QQ；v6 已修复）；② 腾讯风控踢号（已开反检测 bypass 应对）。真正的掉线极少，机器人会 `-q` 快速登录自动恢复（约 1-2 分钟），每 2 小时向通知群汇总一次掉线报告。
 
 **Q：掉线期间发的命令会丢失吗？**
 A：会。QQ 重登后不补推离线消息（掉线期间的消息已被手机端接收），所以掉线窗口内的 @ 命令机器人收不到，上线后请重新发一次。
@@ -305,9 +305,9 @@ A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群
 
 *Q: What's the ZIP password? — A: The `JM_ZIP_PASSWORD` you configured at deploy time. Encryption is mandatory because QQ silently deletes adult images inside plain ZIPs (verified: unencrypted upload fails with `retcode=1200`; AES-128 passes with `retcode=0`). Unzip with WinRAR / 7-Zip / ZArchiver.*
 
-*Q: Why does the bot drop offline sometimes? — A: The Linux QQ client itself crashes periodically (intervals shrinking 30→20→10 min). The bundled watchdog restores it in ~15 s (token-based quick login, no QR re-scan), then notifies the group and apologizes to users who @'d it while offline.*
+*Q: Why does the bot drop offline sometimes? — A: Two root causes were found: (1) watchdog v4/v5 killed QQ by mistake (bare `ss` absent from the crontab PATH → false "down" detection → QQ killed once the cooldown lapsed; fixed in v6); (2) Tencent risk-control kick (anti-detection bypass enabled). Real drop-offs are rare now; the watchdog restores the bot in ~1-2 min (`-q` quick login), and a 2-hourly summary is posted to the notify group.*
 
-*Q: Do commands sent while offline get lost? — A: QQ re-pushes offline messages after re-login; the bot processes them as usual after apologizing to you first.*
+*Q: Do commands sent while offline get lost? — A: Yes. QQ does not re-push offline messages (they are already consumed by the phone client), so @commands sent during an outage never reach the bot. Please resend them after it comes back.*
 
 *Q: What happens during bot upgrades? — A: @mentions during the deploy window get "🚧 Upgrading, please wait"; the window is usually a few seconds.*
 

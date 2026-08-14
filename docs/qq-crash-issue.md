@@ -1,11 +1,19 @@
 # QQ 客户端周期性崩溃问题追踪（Crash Investigation）
 
-> 状态：**风控实锤 + 反检测已开启，观察中** · Status: risk-control confirmed, anti-detection enabled, under observation
+> 状态：**真相大白——"周期崩溃"实为 watchdog 误杀假象，v6 已修复；真掉线仅剩腾讯风控（反检测已开启）** · Status: mystery solved — the "periodic crashes" were watchdog miskills, fixed in v6; only Tencent risk-control kicks remain (anti-detection bypass enabled)
 > 相关 Issue：[本仓库 #1](../../issues/1)、[NapCat 官方 #2013](https://github.com/NapNeko/NapCatQQ/issues/2013)
 
-## 现象 Summary
+## 最终结论 Conclusion（2026-08-14 20:20）
 
-生产服务器上的 QQ Linux 客户端**周期性崩溃**（掉线），崩溃间隔**不断缩短**：30 分钟 → 20 分钟 → 10 分钟。
+**下午"QQ 崩溃周期 30→20→10 分钟不断恶化"是一场乌龙**：watchdog v2-v5 用裸 `ss` 命令检测 8081 端口，而用户 crontab 的默认 PATH（`/usr/bin:/bin`）不含 `/usr/sbin`（`ss` 所在目录）→ 检测命令每次"command not found"→ 永远误判"8081 down"→ 冷却时间一结束就 `pkill` QQ 并重启。**周期数字 30→20→10 分钟 = watchdog 冷却时间的三次调整记录**，与 QQ 本身无关（跨版本 3.2.30/3.2.32 都"崩"也因此解释通）。
+
+- 修复：watchdog v6 改用 `/usr/sbin/ss` 绝对路径。验证：cron 环境实测 QQ 不被误杀（PID 不变）、v6 部署后 watchdog 零误报、QQ 存活突破 10 分钟周期。
+- 真实掉线仅剩：腾讯风控踢号（18:41 风险设备通知实锤；反检测 bypass 六项已开启生效）。
+- 遗留观察：QQ 3.2.30 + NapCat 4.18.18 + bypass + watchdog v6 组合能否长期稳定。
+
+## 现象 Summary（2026-08-14 下午，已被推翻）
+
+~~生产服务器上的 QQ Linux 客户端**周期性崩溃**（掉线），崩溃间隔**不断缩短**：30 分钟 → 20 分钟 → 10 分钟。~~（实为 watchdog 误杀，见上方结论）
 
 - 环境：AlmaLinux 9.2 VPS（香港，64.90.13.42，2C2G + 2GB swap），无头运行（`xvfb-run` + `screen`）
 - 组合：**QQ NT 3.2.30-50969**（Linux AppImage 解包注入）+ **NapCat 4.18.18**（latest，2026-08-07）
@@ -24,6 +32,8 @@
 2026-08-14 15:15:01 8081 down, restarting napcat
 2026-08-14 15:35:01 8081 down, restarting napcat   ← 之后约 10 分钟
 ```
+
+> ⚠️ **以上记录已被重新解读**：这些"down"绝大多数是 watchdog 的 ss 误判（PATH 问题），间隔 30→20→10 分钟 = watchdog 冷却时间调整（v2 30 分钟 → v4 20 分钟 → v5 10 分钟），并非 QQ 真实崩溃周期。仅少数（如 18:36-18:42 需扫码恢复）是真实掉线（风控踢号）。
 
 每次"崩溃"后 watchdog 用 `-q` 快速登录拉起，**15 秒内恢复且免扫码**（token 有效），说明是"小掉线"（客户端崩溃/被踢但凭证未失效），不是凭证失效。
 
