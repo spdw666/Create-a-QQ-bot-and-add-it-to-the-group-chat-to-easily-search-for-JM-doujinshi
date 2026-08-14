@@ -790,6 +790,7 @@ async def _search_image_with_timeout(img_bytes, timeout=60):
 
 def ensure_apk_zip():
     """确保禁漫天堂APP加密ZIP存在（首次调用时下载APK并加密打包，之后走缓存）。
+    包内：安卓APK + 苹果用户说明txt（苹果无官方App，只能网页版）。
     返回 zip 路径；失败返回 None。"""
     import glob
     import pyzipper
@@ -799,7 +800,7 @@ def ensure_apk_zip():
     for z in glob.glob(os.path.join(APK_DIR, '*.zip')):
         if os.path.getsize(z) > 0:
             return z
-    # 下载 APK（官网直链；失败走 GitHub release 镜像）
+    # 下载 APK（GitHub 官方发布主用；官网直链备用）
     apk_path = os.path.join(APK_DIR, APK_FILE)
     if not os.path.exists(apk_path) or os.path.getsize(apk_path) == 0:
         for url in APK_URLS:
@@ -816,17 +817,33 @@ def ensure_apk_zip():
                 log(f'APK 下载失败({url[:50]}): {e!r}')
         if not os.path.exists(apk_path):
             return None
-    # AES-128 加密打包
-    zip_path = os.path.join(APK_DIR, '禁漫天堂APP安装包.zip')
+    # 苹果 iOS 描述文件（企业分发安装包；官网有CF防护程序下不到，需手动放置 apk/ 目录）
+    ios_path = os.path.join(APK_DIR, 'JMComic3.mobileconfig')
+    if not os.path.exists(ios_path):
+        log('iOS 描述文件缺失（apk/JMComic3.mobileconfig），只打安卓包')
+    # 苹果安装说明
+    ios_note = ('【苹果iPhone/iPad 安装步骤】\n'
+                '1. 用 Safari 打开"禁漫天堂APP_苹果.mobileconfig"文件\n'
+                '2. 按提示安装描述文件：设置 → 通用 → VPN与设备管理 → JMComic3 → 安装\n'
+                '3. 安装完成后在描述文件详情页点"信任"即可打开APP\n'
+                '（官方企业分发描述文件，应用大小约3.6M）\n')
+    ios_txt = os.path.join(APK_DIR, '苹果用户安装说明.txt')
+    with open(ios_txt, 'w', encoding='utf-8') as f:
+        f.write(ios_note)
+    # AES-128 加密打包（安卓APK + 苹果描述文件 + 苹果说明）
+    zip_path = os.path.join(APK_DIR, '禁漫天堂安装包_安卓+苹果.zip')
     try:
         with pyzipper.AESZipFile(zip_path, 'w', compression=pyzipper.ZIP_DEFLATED,
                                  encryption=pyzipper.WZ_AES) as zf:
             zf.setpassword(ZIP_PASSWORD.encode())
-            zf.write(apk_path, arcname='禁漫天堂APP.apk')
-        log(f'APK 加密打包完成: {zip_path}')
+            zf.write(apk_path, arcname='禁漫天堂APP_安卓.apk')
+            if os.path.exists(ios_path):
+                zf.write(ios_path, arcname='禁漫天堂APP_苹果.mobileconfig')
+            zf.write(ios_txt, arcname='苹果用户安装说明.txt')
+        log(f'安装包打包完成: {zip_path}')
         return zip_path
     except Exception as e:
-        log(f'APK 打包失败: {e!r}')
+        log(f'安装包打包失败: {e!r}')
         return None
 
 
@@ -865,7 +882,9 @@ async def handle_apk_request(api, group_id):
             result = {'retcode': 0}
     if result and (result.get('retcode') in (0, None)):
         link = publish_http_link(zip_path)
-        msg = f'✅ 禁漫天堂 APP 安装包已上传：{file_name}\n{zip_password_note(zip_path)}'
+        msg = (f'✅ 禁漫天堂安装包已上传：{file_name}\n'
+               f'📦 包内：安卓.apk + 苹果.mobileconfig + 安装说明.txt\n'
+               f'{zip_password_note(zip_path)}')
         if link:
             msg += f'\n🌐 浏览器下载：{link}'
         await api('send_group_msg', {'group_id': group_id, 'message': msg})
