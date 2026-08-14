@@ -110,9 +110,12 @@ def publish_http_link(zip_path):
         token = secrets.token_hex(4)  # 8位随机token，防目录遍历/猜链接
         dest_dir = os.path.join(SHARE_DIR, token)
         os.makedirs(dest_dir, exist_ok=True)
-        dest = os.path.join(dest_dir, os.path.basename(zip_path))
+        # 文件名含 ❤️/[ ]/中文 等字符会被 QQ 客户端截断链接导致 404，用安全短名
+        m = re.match(r'\[JM(\d+)\]', os.path.basename(zip_path))
+        short_name = f'JM{m.group(1)}.zip' if m else f'{token}.zip'
+        dest = os.path.join(dest_dir, short_name)
         shutil.copy2(zip_path, dest)
-        return f'{HTTP_BASE_URL}/{token}/{os.path.basename(zip_path)}'
+        return f'{HTTP_BASE_URL}/{token}/{short_name}'
     except Exception as e:
         log(f'发布HTTP链接失败: {e!r}')
         return None
