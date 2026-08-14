@@ -54,8 +54,10 @@
 | `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
 | `@bot 日榜/周榜/月榜` | 查看排行榜前 5（支持翻页） | Daily / weekly / monthly ranking top 5 (paginated) |
 | `@bot <图片>` | 以图搜本：识图反查出处并尝试在禁漫匹配同款（SauceNAO + iQDB） | Reverse image search: identify the source and try to match the album on the site (SauceNAO + iQDB) |
-| `@bot 随机` | 从近 30 天最火的本子里随机推荐一本 | Random pick from the hottest albums of the last 30 days |
-| `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本 | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album |
+| `@bot 随机` | 从近 30 天最火的本子里随机推荐一本（优先章节少的） | Random pick from the hottest albums of the last 30 days (prefers fewer chapters) |
+| `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本（优先章节少的） | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album (prefers fewer chapters) |
+| `@bot 详情 <ID>` | 查看漫画详情（标题/作者/标签/章节页数，纯文字） | Show album details (title / author / tags / pages, text only) |
+| `@bot 任务` | 查看正在处理的任务及预计剩余时间 | Show in-progress tasks with ETA |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
 | `@bot 取消` | 取消正在进行的下载 | Cancel the in-progress download |
 | `@bot 说明` | 查看使用说明 | Show the help text |
