@@ -43,7 +43,7 @@ def upload(ssh, local_file, remote_file, tries=2):
                 _, err = run(ssh, f"echo {part} >> {remote_file}.new", timeout=60)
                 if err:
                     raise RuntimeError(f'chunk 写入失败: {err[:80]}')
-            out, err = run(ssh, f'base64 -d {remote_file}.new > {remote_file} && md5sum {remote_file}', timeout=120)
+            out, err = run(ssh, f'base64 -d {remote_file}.new > {remote_file} && rm -f {remote_file}.new && md5sum {remote_file}', timeout=120)
             if err:
                 raise RuntimeError(f'base64 解码失败: {err[:80]}')
             import hashlib
