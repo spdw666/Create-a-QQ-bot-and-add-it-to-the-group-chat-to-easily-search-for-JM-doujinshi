@@ -7,7 +7,7 @@
 
 生产服务器上的 QQ Linux 客户端**周期性崩溃**（掉线），崩溃间隔**不断缩短**：30 分钟 → 20 分钟 → 10 分钟。
 
-- 环境：Ubuntu/Debian VPS（香港，64.90.13.42），无头运行（`xvfb-run` + `screen`）
+- 环境：AlmaLinux 9.2 VPS（香港，64.90.13.42，2C2G + 2GB swap），无头运行（`xvfb-run` + `screen`）
 - 组合：**QQ NT 3.2.30-50969**（Linux AppImage 解包注入）+ **NapCat 4.18.18**（latest，2026-08-07）
 - 启动方式：`xvfb-run -a qq --no-sandbox -q <uin>`（快速登录）
 
