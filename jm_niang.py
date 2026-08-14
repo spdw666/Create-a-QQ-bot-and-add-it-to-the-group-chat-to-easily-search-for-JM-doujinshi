@@ -520,6 +520,16 @@ async def fetch_image_with_api(api, img_ref):
 
 # ---------------------------------------------------------------- 核心业务
 
+async def _group_file_exists(api, group_id, file_name):
+    """查询群文件根目录列表，判断目标文件是否已存在（上传事件确认超时的假失败检测）"""
+    try:
+        resp = await api('get_group_root_files', {'group_id': group_id}, timeout=30)
+        files = (resp.get('data') or {}).get('files') or []
+        return any((f.get('file_name') or f.get('name')) == file_name for f in files)
+    except Exception:
+        return False
+
+
 def render_task_status():
     """当前正在处理的任务状态文本（含预计剩余时间）。无任务返回空串"""
     lines = []
@@ -665,6 +675,8 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         })
 
         # 上传群文件（大文件可能较慢，给足超时；QQ偶发限流，自动重试5次）
+        # 注意：NapCat 大文件上传常出现"事件确认超时"假失败（文件实际已上传成功），
+        # 重试前先查群文件列表，已存在则视为成功，避免重复上传两个文件
         result = None
         last_err = ''
         for attempt in range(1, 6):
@@ -683,6 +695,11 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
 
             retcode = result.get('retcode') if result else None
             if retcode in (0, None):
+                break
+            # 假失败检测：事件确认超时但文件可能已传上，查群文件根目录
+            if await _group_file_exists(api, group_id, file_name):
+                log(f'上传事件确认失败但群文件已存在（假失败），视为成功: {file_name}')
+                result = {'retcode': 0}
                 break
             last_err = (result.get('message') or result.get('wording') or '')[:200] or f'retcode={retcode}'
             log(f'上传失败(第{attempt}次): {last_err}，8秒后重试…')
