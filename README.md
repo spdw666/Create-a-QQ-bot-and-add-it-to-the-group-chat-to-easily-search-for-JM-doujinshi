@@ -225,7 +225,6 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped). |
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 | `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
-| `JM_NOTIFY_GROUP` | ❌ | 掉线汇总报告群（QQ 群号；cron 脚本每 2 小时汇总掉线/重连情况发到此群，默认 `810152420`）。Group ID for the 2-hourly offline summary report (default `810152420`). |
 
 ## 运维 Operations
 
@@ -243,9 +242,9 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
-> 💡 **原理（懂行版）**：QQ Linux 客户端会周期性崩溃（此前误以为间隔 30→20→10 分钟恶化——**真相是 watchdog 误杀**：v4/v5 用裸 `ss` 检测，用户 crontab PATH 不含 /usr/sbin 导致永远误判掉线、冷却结束就杀 QQ，周期数=冷却时间变化；v6 改 `/usr/sbin/ss` 绝对路径后已修复）。另有腾讯风控因素（详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)）。watchdog 每 1 分钟检测 8081，掉线用 `-q <QQ号>` 快速登录拉起（token 有效即免扫码，拉起约 15-30 秒；10 分钟冷却期内不重复拉起）。`napcat_offline_report.py` 由 cron 每 2 小时从 journalctl 统计重连次数，汇总报告发到 `JM_NOTIFY_GROUP`（独立于 jmniang 进程，部署重启不影响统计）。
+> 💡 **原理（懂行版）**：QQ Linux 客户端会周期性崩溃（此前误以为间隔 30→20→10 分钟恶化——**真相是 watchdog 误杀**：v4/v5 用裸 `ss` 检测，用户 crontab PATH 不含 /usr/sbin 导致永远误判掉线、冷却结束就杀 QQ，周期数=冷却时间变化；v6 改 `/usr/sbin/ss` 绝对路径后已修复）。另有腾讯风控因素（详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)）。watchdog 每 1 分钟检测 8081，掉线用 `-q <QQ号>` 快速登录拉起（token 有效即免扫码，拉起约 15-30 秒；10 分钟冷却期内不重复拉起）。
 >
-> 💡 *How it works: the Linux QQ client crashes periodically (the previously assumed 30→20→10-min worsening was actually the watchdog killing QQ: v4/v5 used bare `ss` which is absent from the user crontab PATH, so every check misdetected "down" and killed QQ once the cooldown lapsed; v6 uses the absolute path `/usr/sbin/ss` and fixes this). Tencent risk-control is also a factor (see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15-30 s to come up; no relaunch within the 10-min cooldown). `napcat_offline_report.py` (cron, every 2 h) counts reconnects from journalctl and sends a summary to `JM_NOTIFY_GROUP` — independent of the jmniang process, so deploys don't reset the stats.*
+> 💡 *How it works: the Linux QQ client crashes periodically (the previously assumed 30→20→10-min worsening was actually the watchdog killing QQ: v4/v5 used bare `ss` which is absent from the user crontab PATH, so every check misdetected "down" and killed QQ once the cooldown lapsed; v6 uses the absolute path `/usr/sbin/ss` and fixes this). Tencent risk-control is also a factor (see [docs/qq-crash-issue.md](docs/qq-crash-issue.md)). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15-30 s to come up; no relaunch within the 10-min cooldown).*
 
 ### 无感部署 Zero-downtime deploys
 
@@ -292,7 +291,7 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 A：是部署时配置的 `JM_ZIP_PASSWORD`。必须加密——QQ 会扫描 ZIP 内容并静默删除成人图片（实测未加密 `retcode=1200` 上传失败，AES-128 加密后 `retcode=0` 正常）。用 WinRAR / 7-Zip / ZArchiver 解压即可。
 
 **Q：为什么机器人偶尔掉线？**
-A：曾查出两大原因：① watchdog v4/v5 误杀（裸 `ss` 不在 crontab PATH → 误判掉线 → 冷却结束杀 QQ；v6 已修复）；② 腾讯风控踢号（已开反检测 bypass 应对）。真正的掉线极少，机器人会 `-q` 快速登录自动恢复（约 1-2 分钟），每 2 小时向通知群汇总一次掉线报告。
+A：曾查出两大原因：① watchdog v4/v5 误杀（裸 `ss` 不在 crontab PATH → 误判掉线 → 冷却结束杀 QQ；v6 已修复）；② 腾讯风控踢号（已开反检测 bypass 应对）。真正的掉线极少，机器人会 `-q` 快速登录自动恢复（约 1-2 分钟）。
 
 **Q：掉线期间发的命令会丢失吗？**
 A：会。QQ 重登后不补推离线消息（掉线期间的消息已被手机端接收），所以掉线窗口内的 @ 命令机器人收不到，上线后请重新发一次。
@@ -305,7 +304,7 @@ A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群
 
 *Q: What's the ZIP password? — A: The `JM_ZIP_PASSWORD` you configured at deploy time. Encryption is mandatory because QQ silently deletes adult images inside plain ZIPs (verified: unencrypted upload fails with `retcode=1200`; AES-128 passes with `retcode=0`). Unzip with WinRAR / 7-Zip / ZArchiver.*
 
-*Q: Why does the bot drop offline sometimes? — A: Two root causes were found: (1) watchdog v4/v5 killed QQ by mistake (bare `ss` absent from the crontab PATH → false "down" detection → QQ killed once the cooldown lapsed; fixed in v6); (2) Tencent risk-control kick (anti-detection bypass enabled). Real drop-offs are rare now; the watchdog restores the bot in ~1-2 min (`-q` quick login), and a 2-hourly summary is posted to the notify group.*
+*Q: Why does the bot drop offline sometimes? — A: Two root causes were found: (1) watchdog v4/v5 killed QQ by mistake (bare `ss` absent from the crontab PATH → false "down" detection → QQ killed once the cooldown lapsed; fixed in v6); (2) Tencent risk-control kick (anti-detection bypass enabled). Real drop-offs are rare now; the watchdog restores the bot in ~1-2 min (`-q` quick login).*
 
 *Q: Do commands sent while offline get lost? — A: Yes. QQ does not re-push offline messages (they are already consumed by the phone client), so @commands sent during an outage never reach the bot. Please resend them after it comes back.*
 
@@ -328,8 +327,6 @@ napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉
                      # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (token-based quick login)
 qq_daily_restart.sh  # 每日 04:30 重启 QQ，清理长时间运行的内存泄漏
                      # daily 04:30 QQ restart to clear long-running memory leaks
-napcat_offline_report.py  # cron 每 2 小时从 journalctl 统计重连次数，掉线汇总报告发到通知群
-                          # cron job (every 2 h): counts reconnects from journalctl, posts offline summary to the notify group
 test_jm_download.py  # 离线单元测试（15 项）· offline unit tests (15 cases)
 .env.example         # 环境变量示例 · environment variable template
 start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
