@@ -61,6 +61,7 @@ ALLOWED_GROUPS = []
 MAX_CONCURRENT_DOWNLOADS = 2
 SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 DOWNLOAD_QUEUE = 0  # 当前排队等待的任务数（排队位置提示用）
+ACTIVE_TASKS = {}  # 正在处理的任务状态：album_id -> {phase, done, total}（排队告知用）
 
 # ---------- HTTP 下载链接分享配置 ----------
 # 服务器公网IP与HTTP服务端口（腾讯云轻量控制台需放行该端口）
@@ -514,6 +515,22 @@ async def fetch_image_with_api(api, img_ref):
 
 # ---------------------------------------------------------------- 核心业务
 
+def render_task_status():
+    """当前正在处理的任务状态文本（含预计剩余时间）。无任务返回空串"""
+    lines = []
+    for aid, t in list(ACTIVE_TASKS.items()):
+        if t['phase'] == '下载中' and t['total'] > 0:
+            remain = t['total'] - t['done']
+            est_min = max(1, int(remain * SECONDS_PER_PAGE_MAX / 60))
+            lines.append(f'{len(lines) + 1}. 漫画 {aid}：下载中 {t["done"]}/{t["total"]} 页，'
+                         f'约还需 {est_min} 分钟')
+        elif t['phase'] == '上传中':
+            lines.append(f'{len(lines) + 1}. 漫画 {aid}：上传中，约还需 1-2 分钟')
+        else:
+            lines.append(f'{len(lines) + 1}. 漫画 {aid}：准备中…')
+    return '\n'.join(lines)
+
+
 async def monitor_progress(api, group_id, album_id, total_pages, download_task):
     """轮询下载目录汇报进度：有总页数按 25%/50%/75% 报百分比；拿不到页数则每30秒报绝对进度。
     进度消息最小间隔 10 秒（用户要求：不要频繁刷屏）"""
@@ -524,6 +541,8 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
     last_report = 0.0
     while not download_task.done():
         done = count_images(task_dir)
+        if album_id in ACTIVE_TASKS:
+            ACTIVE_TASKS[album_id]['done'] = done
         now = time.monotonic()
         if now - last_report < 10:
             # 两次进度消息至少间隔10秒，防刷屏
@@ -567,6 +586,7 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         })
         return
     ACTIVE_DOWNLOADS.append(album_id)  # 立即占位，消除并发窗口（防双任务双份进度）
+    ACTIVE_TASKS[album_id] = {'phase': '准备中', 'done': 0, 'total': 0}  # 排队告知用
     try:
         # 1. 缓存命中则直接上传（旧缓存若未加密，现场转加密，否则QQ会拒收）
         cached_zip, cached_title = await loop.run_in_executor(None, find_cached_zip, album_id)
@@ -607,6 +627,8 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
                 })
 
             # 3. 启动下载 + 进度轮询（活跃任务已在入口登记占位）
+            ACTIVE_TASKS[album_id]['phase'] = '下载中'
+            ACTIVE_TASKS[album_id]['total'] = total_pages
             download_task = loop.create_task(
                 asyncio.to_thread(download_album_to_zip, album_id)
             )
@@ -633,6 +655,8 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         size = os.path.getsize(zip_path)
         file_name = os.path.basename(zip_path)
         pwd_note = zip_password_note(zip_path)
+        if album_id in ACTIVE_TASKS:
+            ACTIVE_TASKS[album_id]['phase'] = '上传中'
 
         # 发布HTTP下载链接（无论群文件上传成败都发，双保险）
         http_url = await loop.run_in_executor(None, publish_http_link, zip_path)
@@ -704,6 +728,7 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
     finally:
         if album_id in ACTIVE_DOWNLOADS:
             ACTIVE_DOWNLOADS.remove(album_id)
+        ACTIVE_TASKS.pop(album_id, None)
 
 
 async def _search_image_with_timeout(img_bytes, timeout=60):
@@ -1119,11 +1144,15 @@ async def handle_message(ws, api, msg, bot_qq):
         DOWNLOAD_QUEUE += 1
         try:
             if SEMAPHORE.locked():
+                tasks_txt = render_task_status()
+                msg = f'📥 下载任务较多，漫画 {album_id} 已加入队列\n'
+                if tasks_txt:
+                    msg += f'📋 当前任务：\n{tasks_txt}\n'
+                msg += f'（前面还有约 {DOWNLOAD_QUEUE} 个任务，'
+                msg += f'每个约 2-10 分钟，请耐心等待…）'
                 await api('send_group_msg', {
                     'group_id': group_id,
-                    'message': f'📥 下载任务较多，漫画 {album_id} 已加入队列\n'
-                               f'（前面还有约 {DOWNLOAD_QUEUE} 个任务，'
-                               f'每个约 2-10 分钟，请耐心等待…）'
+                    'message': msg
                 })
 
             async with SEMAPHORE:
