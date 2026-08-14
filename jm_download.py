@@ -209,6 +209,7 @@ def get_album_page_count(album_id):
 def get_random_hot_album():
     """
     随机推荐：从近30天最火（按浏览量排序）的本子中随机挑一本。
+    热度榜第一页自带标题，零详情请求（<2秒）；无作者/章节数（渲染端兼容）。
 
     :return: dict {id, title, author, chapter_count} 或 None（失败）
     """
@@ -221,18 +222,12 @@ def get_random_hot_album():
         # 空关键词 + 本月 + 按浏览量（热度）排序
         page = client.search_site('', page=1, order_by=JmMagicConstants.ORDER_BY_VIEW,
                                   time=JmMagicConstants.TIME_MONTH)
-        ids = list(page.iter_id())
-        if not ids:
+        items = list(page.iter_id_title())
+        if not items:
             return None
         # 从前 30 本里随机挑（避免总是同一本）
-        album_id = random.choice(ids[:min(30, len(ids))])
-        detail = client.get_album_detail(album_id)
-        return {
-            'id': str(detail.id),
-            'title': detail.title,
-            'author': detail.author,
-            'chapter_count': len([p for p in detail]),
-        }
+        aid, title = random.choice(items[:min(30, len(items))])
+        return {'id': str(aid), 'title': title or '', 'author': '', 'chapter_count': 0}
     except Exception:
         return None
 

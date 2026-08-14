@@ -843,8 +843,6 @@ async def handle_message(ws, api, msg, bot_qq):
             'group_id': group_id,
             'message': f'🎲 随机推荐（近30天热门）\n'
                        f'📕《{escape_cq(info["title"])}》\n'
-                       f'✍️ 作者：{escape_cq(info["author"])}\n'
-                       f'📚 共 {info["chapter_count"]} 章\n'
                        f'🔢 ID：{info["id"]}\n'
                        f'📎 https://18comic.vip/album/{info["id"]}\n'
                        f'想要？@我 + 发送这个ID 即可打包下载'
