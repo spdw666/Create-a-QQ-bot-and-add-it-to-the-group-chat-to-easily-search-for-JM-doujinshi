@@ -193,7 +193,9 @@ def get_album_info(album_id):
 
         with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
             total = sum(ex.map(_count, ids))
-        return {'title': album.title, 'chapter_count': len(ids), 'page_count': total}
+        return {'title': album.title, 'chapter_count': len(ids), 'page_count': total,
+                'author': getattr(album, 'author', '') or '',
+                'tags': getattr(album, 'tags', '') or ''}
     except Exception:
         return None
 
@@ -973,18 +975,34 @@ def download_album_to_zip(album_id, work_dir=None):
     option.download.threading.image = IMAGE_CONCURRENCY
     option.download.threading.photo = PHOTO_CONCURRENCY
 
+    def _do_download():
+        try:
+            # 下载 + 自动打包ZIP（Feature.export_zip 在整本下载完后合并打包）
+            # 使用 CancelableDownloader 支持下载中取消
+            extra = Feature.export_zip
+            if ZIP_ENCRYPT:
+                # 加密打包（AES-128），防QQ内容扫描
+                extra = Feature.export_zip(encrypt={'type': 'password', 'password': ZIP_PASSWORD})
+            return download_album(album_id, option, downloader=CancelableDownloader, extra=extra)
+        except Exception as e:
+            if str(album_id) in CANCELLED_ALBUMS:
+                raise DownloadCancelledError(f'用户取消了下载: {album_id}') from e
+            raise
+
     try:
-        # 下载 + 自动打包ZIP（Feature.export_zip 在整本下载完后合并打包）
-        # 使用 CancelableDownloader 支持下载中取消
-        extra = Feature.export_zip
-        if ZIP_ENCRYPT:
-            # 加密打包（AES-128），防QQ内容扫描
-            extra = Feature.export_zip(encrypt={'type': 'password', 'password': ZIP_PASSWORD})
-        result = download_album(album_id, option, downloader=CancelableDownloader, extra=extra)
-    except Exception as e:
-        if str(album_id) in CANCELLED_ALBUMS:
-            raise DownloadCancelledError(f'用户取消了下载: {album_id}') from e
+        result = _do_download()
+    except DownloadCancelledError:
         raise
+    except Exception:
+        # 下载失败自动重试一次：清理半成品（禁漫 CDN 波动/限流常见），重试时 jmcomic 域名刷新会换 CDN
+        try:
+            shutil.rmtree(task_dir, ignore_errors=True)
+            os.makedirs(task_dir, exist_ok=True)
+            result = _do_download()
+        except DownloadCancelledError:
+            raise
+        except Exception:
+            raise
     album = result.detail  # DownloadResult(detail, downloader)，detail 即 album 实体
 
     # 定位生成的ZIP文件

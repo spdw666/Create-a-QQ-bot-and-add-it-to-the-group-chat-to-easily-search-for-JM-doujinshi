@@ -48,6 +48,9 @@ from jm_download import (
 
 WS_HOST = '127.0.0.1'
 WS_PORT = 8081
+# 掉线恢复通知群（重连成功时发"已恢复上线"；环境变量 JM_NOTIFY_GROUP 可覆盖，默认测试群）
+NOTIFY_GROUP = int(os.environ.get('JM_NOTIFY_GROUP', '810152420'))
+FIRST_CONNECTION = True  # 首次连接不发恢复通知，重连才发
 
 # 允许使用机器人的群白名单。空列表 = 所有群都能用。
 # 想限制只让某个群使用，填群的数字ID，例如: ALLOWED_GROUPS = [123456789]
@@ -57,6 +60,7 @@ ALLOWED_GROUPS = []
 # 3本同时下载易触发禁漫CDN限流(502)，默认2本
 MAX_CONCURRENT_DOWNLOADS = 2
 SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+DOWNLOAD_QUEUE = 0  # 当前排队等待的任务数（排队位置提示用）
 
 # ---------- HTTP 下载链接分享配置 ----------
 # 服务器公网IP与HTTP服务端口（腾讯云轻量控制台需放行该端口）
@@ -326,6 +330,28 @@ def extract_album_id(text: str):
     m = re.search(r'album/(\d{5,9})', text, re.IGNORECASE)
     if m:
         return m.group(1)
+    return None
+
+
+# 详情预览触发词（@JM娘 详情 <ID> → 纯文字详情，不发图防QQ内容扫描）
+DETAIL_WORDS = ('详情', '预览', '看看', 'info', 'detail')
+
+
+def extract_detail_id(text: str):
+    """从@后的文本中提取「详情 <ID>」的漫画ID，提取不到返回 None"""
+    if not text:
+        return None
+    low = text.lower().strip()
+    for w in DETAIL_WORDS:
+        if low.startswith(w):
+            rest = low[len(w):].strip().lstrip('：:： ').strip()
+            aid = extract_album_id(rest)
+            if aid:
+                return aid
+            # 「详情350234」无空格也支持
+            m = re.fullmatch(r'\s*(\d{5,9})\s*', rest)
+            if m:
+                return m.group(1)
     return None
 
 
@@ -1037,20 +1063,52 @@ async def handle_message(ws, api, msg, bot_qq):
         })
         return
 
+    # 详情预览命令：@机器人 + 详情 <ID> → 纯文字详情（不发图，防QQ内容扫描）
+    detail_id = extract_detail_id(text)
+    if detail_id:
+        log(f'群 {group_id} 用户 {user_id} 请求详情: {detail_id}')
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'📋 正在获取漫画 {detail_id} 的信息…'
+        })
+        info = await asyncio.to_thread(get_album_info, detail_id)
+        if info:
+            tags = ', '.join(str(t) for t in (info.get('tags') or [])[:8])
+            msg = (f'📕《{escape_cq(info["title"])}》\n'
+                   f'✍️ 作者：{escape_cq(info.get("author") or "未知")}\n'
+                   f'🏷️ 标签：{escape_cq(tags) if tags else "无"}\n'
+                   f'📚 共 {info["chapter_count"]} 章 / {info["page_count"]} 页\n'
+                   f'🔗 禁漫：https://18comic.vip/album/{detail_id}\n'
+                   f'💾 @我 {detail_id} 即可下载')
+            await api('send_group_msg', {'group_id': group_id, 'message': msg})
+        else:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': f'❌ 获取漫画 {detail_id} 信息失败（ID 不存在或网络波动）'
+            })
+        return
+
     # 下载命令：@机器人 + /jm数字
     album_id = extract_album_id(text)
     if album_id:
         log(f'群 {group_id} 用户 {user_id} 请求下载: {album_id}')
 
         # 排队通知（同时最多 MAX_CONCURRENT_DOWNLOADS 本在下载）
-        if SEMAPHORE.locked():
-            await api('send_group_msg', {
-                'group_id': group_id,
-                'message': f'📥 下载任务较多，漫画 {album_id} 已加入队列，请稍等…'
-            })
+        global DOWNLOAD_QUEUE
+        DOWNLOAD_QUEUE += 1
+        try:
+            if SEMAPHORE.locked():
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': f'📥 下载任务较多，漫画 {album_id} 已加入队列\n'
+                               f'（前面还有约 {DOWNLOAD_QUEUE} 个任务，'
+                               f'每个约 2-10 分钟，请耐心等待…）'
+                })
 
-        async with SEMAPHORE:
-            await handle_jm_request(ws, api, group_id, user_id, album_id)
+            async with SEMAPHORE:
+                await handle_jm_request(ws, api, group_id, user_id, album_id)
+        finally:
+            DOWNLOAD_QUEUE -= 1
         return
 
     # 以图搜本：@机器人 + [图片]（text 为空但带图）→ 直接识图
@@ -1116,6 +1174,7 @@ async def handle_message(ws, api, msg, bot_qq):
 
 async def handle_connection(ws):
     """WS连接处理：reader 后台任务统一消费数据，api() 匹配 echo 响应，事件分发给处理函数"""
+    global FIRST_CONNECTION
     pending: dict = {}
     bot_qq_box = [None]  # 可变容器，reader 闭包读取
     log(f'NapCat 已连接: {ws.remote_address}')
@@ -1126,6 +1185,17 @@ async def handle_connection(ws):
         pending[echo] = fut
         await ws.send(json.dumps({'action': action, 'params': params or {}, 'echo': echo}))
         return await asyncio.wait_for(fut, timeout)
+
+    # 掉线恢复通知：重连成功后向通知群发消息（首次连接不发）
+    if not FIRST_CONNECTION:
+        try:
+            await api('send_group_msg', {
+                'group_id': NOTIFY_GROUP,
+                'message': '🤖 JM娘 已恢复上线～（刚经历了掉线，抱歉）'
+            })
+        except Exception:
+            pass
+    FIRST_CONNECTION = False
 
     async def reader():
         """统一消费 WS 数据：匹配 API 响应 / 分发事件"""

@@ -385,3 +385,27 @@ def test_handle_message_branches():
     SEARCH_STATE.pop(GROUP, None)
     run('错了')
     assert '没有可重新搜索的记录' in sent[0][1]['message']
+    # 10. 详情预览：@详情 350234 → 纯文字详情（mock get_album_info，不发图）
+    from jm_niang import extract_detail_id, get_album_info as real_get_info
+    jm_niang.get_album_info = lambda aid: {
+        'title': f'详情本{aid}', 'chapter_count': 2, 'page_count': 50,
+        'author': '作者甲', 'tags': ['NTR', '人妻']}
+    run('详情 350234')
+    m10 = sent[-1][1]['message']
+    assert '详情本350234' in m10 and '作者甲' in m10 and 'NTR' in m10 and '50 页' in m10
+    assert '350234 即可下载' in m10
+    # 10b. 详情无空格/预览/失败文案
+    run('详情350234')
+    assert '详情本350234' in sent[-1][1]['message']
+    run('预览 350234')
+    assert '详情本350234' in sent[-1][1]['message']
+    jm_niang.get_album_info = lambda aid: None
+    run('详情 350234')
+    assert '信息失败' in sent[-1][1]['message']
+    jm_niang.get_album_info = real_get_info
+    # 10c. extract_detail_id 纯函数
+    assert extract_detail_id('详情 350234') == '350234'
+    assert extract_detail_id('详情350234') == '350234'
+    assert extract_detail_id('预览 123456') == '123456'
+    assert extract_detail_id('350234') is None  # 纯数字走下载命令，不是详情
+    assert extract_detail_id('随便详情') is None
