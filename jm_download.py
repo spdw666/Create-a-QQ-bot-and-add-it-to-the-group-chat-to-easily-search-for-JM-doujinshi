@@ -206,10 +206,36 @@ def get_album_page_count(album_id):
     return info['page_count'] if info else 0
 
 
+def _pick_smallest_chapters(items, n=3):
+    """从候选 (id, title) 里随机挑 n 本，并发拉详情后选章节数最少的一本。
+    返回 dict{id,title,author,chapter_count} 或 None（全部失败）"""
+    import random
+    from concurrent.futures import ThreadPoolExecutor
+
+    picks = random.sample(list(items), min(n, len(items)))
+
+    def _fetch(aid, title):
+        try:
+            opt = _apply_proxy(JmOption.default())
+            c = opt.new_jm_client()
+            detail = c.get_album_detail(aid)
+            return (len([p for p in detail]), str(detail.id), detail.title,
+                    getattr(detail, 'author', '') or '')
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=n) as ex:
+        fetched = [r for r in ex.map(lambda x: _fetch(x[0], x[1]), picks) if r]
+    if not fetched:
+        return None
+    ch, aid, title, author = min(fetched, key=lambda x: x[0])
+    return {'id': aid, 'title': title or '', 'author': author, 'chapter_count': ch}
+
+
 def get_random_hot_album():
     """
-    随机推荐：从近30天最火（按浏览量排序）的本子中随机挑一本。
-    热度榜第一页自带标题，零详情请求（<2秒）；无作者/章节数（渲染端兼容）。
+    随机推荐：从近30天最火（按浏览量排序）的本子中挑一本**章节数最少**的（好下载）。
+    候选 3 本并发详情，约 1-2 秒。
 
     :return: dict {id, title, author, chapter_count} 或 None（失败）
     """
@@ -225,9 +251,8 @@ def get_random_hot_album():
         items = list(page.iter_id_title())
         if not items:
             return None
-        # 从前 30 本里随机挑（避免总是同一本）
-        aid, title = random.choice(items[:min(30, len(items))])
-        return {'id': str(aid), 'title': title or '', 'author': '', 'chapter_count': 0}
+        # 从前 30 本里挑章节数最少的（避免总是同一本）
+        return _pick_smallest_chapters(items[:30])
     except Exception:
         return None
 
@@ -855,8 +880,8 @@ FUN_TAGS = [
 
 def get_random_tag_album():
     """
-    今日属性：从标签池随机挑一个标签，标签搜索第一页直接挑一本（零详情请求，<2秒）。
-    搜索页自带 (id, title)；无作者/章节数（渲染端兼容）。
+    今日属性：从标签池随机挑一个标签，该标签搜索里挑一本**章节数最少**的（好下载）。
+    候选 3 本并发详情，约 1-2 秒。
 
     :return: dict{tag, id, title, author, chapter_count}；连续3次失败返回 None
     """
@@ -871,9 +896,10 @@ def get_random_tag_album():
         except Exception:
             continue  # 该标签搜索失败，换下一个标签
         if items:
-            aid, title = random.choice(items)
-            return {'tag': tag, 'id': str(aid), 'title': title or '',
-                    'author': '', 'chapter_count': 0}
+            pick = _pick_smallest_chapters(items[:24])
+            if pick:
+                pick['tag'] = tag
+                return pick
     return None
 
 

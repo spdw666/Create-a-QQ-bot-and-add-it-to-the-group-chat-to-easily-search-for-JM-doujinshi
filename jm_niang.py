@@ -843,6 +843,8 @@ async def handle_message(ws, api, msg, bot_qq):
             'group_id': group_id,
             'message': f'🎲 随机推荐（近30天热门）\n'
                        f'📕《{escape_cq(info["title"])}》\n'
+                       f'✍️ 作者：{escape_cq(info["author"] or "未知")}\n'
+                       f'📚 共 {info["chapter_count"]} 章\n'
                        f'🔢 ID：{info["id"]}\n'
                        f'📎 https://18comic.vip/album/{info["id"]}\n'
                        f'想要？@我 + 发送这个ID 即可打包下载'
@@ -871,8 +873,9 @@ async def handle_message(ws, api, msg, bot_qq):
         await api('send_group_msg', {
             'group_id': group_id,
             'message': f'[CQ:at,qq={user_id}] 🎭 今日你的属性是【{escape_cq(info["tag"])}】！\n'
-                       f'📕 附赠一本「{escape_cq(info["tag"])}」本子：\n'
+                       f'📕 附赠一本「{escape_cq(info["tag"])}」本子（章节少好下载）：\n'
                        f'《{escape_cq(info["title"])}》\n'
+                       f'✍️ 作者：{escape_cq(info["author"] or "未知")}  章节：{info["chapter_count"]}章\n'
                        f'🔢 ID：{info["id"]}\n'
                        f'想要？@我 + 发送这个ID 即可打包下载'
         })
