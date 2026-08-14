@@ -225,7 +225,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
-> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（约 30 分钟一次），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。恢复后机器人会向 `JM_NOTIFY_GROUP` 发"已恢复上线"，并对掉线期间 @ 它的用户逐个 @回 道歉。
+> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟持续恶化中），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。恢复后机器人会向 `JM_NOTIFY_GROUP` 每 2 小时汇总一次掉线报告，并对掉线期间 @ 它的用户逐个 @回 道歉。
 >
 > 💡 *How it works: the Linux QQ client crashes periodically (~every 30 min). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15 s total). On recovery the bot notifies `JM_NOTIFY_GROUP` and @-apologizes to users who mentioned it while offline.*
 
@@ -262,7 +262,7 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 | Group file upload fails | QQ scans ZIP contents and rejects adult images → keep `ZIP_ENCRYPT = True` (AES-128); users need WinRAR / 7-Zip / ZArchiver |
 | 明明存在的本子搜不到 | 站内搜索是精确子串匹配；4 层降级已覆盖简体/繁体/日文写法，但超冷门单字组合仍可能漏（见 `_search_by_core_chars`） |
 | Search misses a known title | Site search is exact substring matching; the 4-layer fallback covers most cases, but ultra-rare combos may still miss (see `_search_by_core_chars`) |
-| 机器人每 30 分钟左右掉线一次 | QQ Linux 客户端自身 bug（3.2.30 起周期性崩溃），与项目无关；watchdog 每分钟检测 + 15 秒自动恢复兜底（见[运维](#运维-operations)） |
+| 机器人周期性掉线（30→20→10 分钟递减） | QQ Linux 客户端自身 bug（3.2.30 起周期性崩溃），与项目无关；watchdog 每分钟检测 + 15 秒自动恢复兜底（见[运维](#运维-operations)） |
 | Bot drops offline about every 30 min | A bug in the Linux QQ client itself (periodic crashes since 3.2.30), unrelated to this project; the watchdog restores it in ~15 s (see [Operations](#运维-operations)) |
 | 群里出现两个同名文件 | 已修复：上传失败重试前会查群文件列表去重，列表 API 异常时停止重试（重试上限 2 次） |
 | Duplicate files appear in group | Fixed: the uploader checks the group file list before retrying, and stops retrying if the list API is broken (max 2 attempts) |
@@ -273,7 +273,7 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 A：是部署时配置的 `JM_ZIP_PASSWORD`。必须加密——QQ 会扫描 ZIP 内容并静默删除成人图片（实测未加密 `retcode=1200` 上传失败，AES-128 加密后 `retcode=0` 正常）。用 WinRAR / 7-Zip / ZArchiver 解压即可。
 
 **Q：为什么机器人偶尔掉线？**
-A：QQ Linux 客户端本身有周期性崩溃 bug（约 30 分钟一次），与项目代码无关。机器人已配备看门狗自动恢复（约 15 秒，免扫码），恢复后会通知群里并 @回 掉线期间找它的人。
+A：QQ Linux 客户端本身有周期性崩溃 bug（间隔 30→20→10 分钟持续恶化），与项目代码无关。机器人已配备看门狗自动恢复（约 15 秒，免扫码），恢复后会通知群里并 @回 掉线期间找它的人。
 
 **Q：掉线期间发的命令会丢失吗？**
 A：QQ 重登后会补推离线消息，机器人上线后照常处理这些命令，并先 @你 道歉。
@@ -286,7 +286,7 @@ A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群
 
 *Q: What's the ZIP password? — A: The `JM_ZIP_PASSWORD` you configured at deploy time. Encryption is mandatory because QQ silently deletes adult images inside plain ZIPs (verified: unencrypted upload fails with `retcode=1200`; AES-128 passes with `retcode=0`). Unzip with WinRAR / 7-Zip / ZArchiver.*
 
-*Q: Why does the bot drop offline sometimes? — A: The Linux QQ client itself crashes periodically (~every 30 min). The bundled watchdog restores it in ~15 s (token-based quick login, no QR re-scan), then notifies the group and apologizes to users who @'d it while offline.*
+*Q: Why does the bot drop offline sometimes? — A: The Linux QQ client itself crashes periodically (intervals shrinking 30→20→10 min). The bundled watchdog restores it in ~15 s (token-based quick login, no QR re-scan), then notifies the group and apologizes to users who @'d it while offline.*
 
 *Q: Do commands sent while offline get lost? — A: QQ re-pushes offline messages after re-login; the bot processes them as usual after apologizing to you first.*
 
