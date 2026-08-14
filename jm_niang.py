@@ -76,6 +76,15 @@ HTTP_BASE_URL = f'http://{PUBLIC_IP}:{HTTP_PORT}'
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SHARE_DIR = os.path.join(BASE_DIR, 'http_dl')
 
+# 禁漫天堂 APP 安装包（用户发"安装包"等关键词时加密上传到群文件）
+APK_DIR = os.path.join(BASE_DIR, 'apk')
+APK_FILE = '禁漫天堂APP.apk'
+APK_URLS = (
+    'https://github.com/hect0x7/JMComic-APK/releases/download/2.0.33/2.0.33.apk',  # GitHub 官方发布（主用）
+    'https://18comic.vip/static/apk/2.0.33.apk',      # 官网直链（备用，可能反爬403）
+)
+JM_PROXY = os.environ.get('JM_PROXY', '').strip()  # 可选 HTTP 代理（下载 APK 用）
+
 
 # ---------------------------------------------------------------- 工具函数
 
@@ -144,6 +153,9 @@ HELP_TEXT = (
     '🎲 随机推荐：@我 随机\n'
     '   （也支持：抽一本 / 推荐 / 来一本）\n'
     '   从近30天最火的本子里随机抽一本推荐\n\n'
+    '📱 安装包：@我 安装包\n'
+    '   （也支持：jm安装包 / jm2安装包 / jm3安装包）\n'
+    '   发送禁漫天堂 APP 安装包（加密ZIP+密码）\n\n'
     '🎭 今日属性：@我 今日属性\n'
     '   随机占卜你的今日属性（NTR/纯爱等标签）\n'
     '   并附赠一本对应标签的本子（含ID）\n\n'
@@ -184,6 +196,9 @@ CANCEL_WORDS = {'取消', '停止', 'stop', 'cancel', '算了'}
 
 # 随机推荐类命令词
 RANDOM_WORDS = {'随机', '抽一本', '推荐', '来一本', '随缘', 'random', '随机推荐', '随机来一本'}
+
+# 安装包类命令词
+INSTALL_WORDS = {'jm2安装包', 'jm安装包', 'jm3安装包', '安装包'}
 
 # 今日属性命令词
 TAG_WORDS = {'今日属性', '属性', 'today'}
@@ -773,6 +788,97 @@ async def _search_image_with_timeout(img_bytes, timeout=60):
         asyncio.to_thread(search_by_image, img_bytes), timeout=timeout)
 
 
+def ensure_apk_zip():
+    """确保禁漫天堂APP加密ZIP存在（首次调用时下载APK并加密打包，之后走缓存）。
+    返回 zip 路径；失败返回 None。"""
+    import glob
+    import pyzipper
+    import requests
+    os.makedirs(APK_DIR, exist_ok=True)
+    # 缓存命中：目录里已有打包好的 zip
+    for z in glob.glob(os.path.join(APK_DIR, '*.zip')):
+        if os.path.getsize(z) > 0:
+            return z
+    # 下载 APK（官网直链；失败走 GitHub release 镜像）
+    apk_path = os.path.join(APK_DIR, APK_FILE)
+    if not os.path.exists(apk_path) or os.path.getsize(apk_path) == 0:
+        for url in APK_URLS:
+            try:
+                proxies = {'http': JM_PROXY, 'https': JM_PROXY} if JM_PROXY else None
+                r = requests.get(url, timeout=180, proxies=proxies, headers={
+                    'User-Agent': 'Mozilla/5.0 (Linux; Android 12) JMniang/1.0'})
+                if r.status_code == 200 and len(r.content) > 1024 * 1024:
+                    with open(apk_path, 'wb') as f:
+                        f.write(r.content)
+                    log(f'APK 下载成功: {url} ({len(r.content) // 1024 // 1024}MB)')
+                    break
+            except Exception as e:
+                log(f'APK 下载失败({url[:50]}): {e!r}')
+        if not os.path.exists(apk_path):
+            return None
+    # AES-128 加密打包
+    zip_path = os.path.join(APK_DIR, '禁漫天堂APP安装包.zip')
+    try:
+        with pyzipper.AESZipFile(zip_path, 'w', compression=pyzipper.ZIP_DEFLATED,
+                                 encryption=pyzipper.WZ_AES) as zf:
+            zf.setpassword(ZIP_PASSWORD.encode())
+            zf.write(apk_path, arcname='禁漫天堂APP.apk')
+        log(f'APK 加密打包完成: {zip_path}')
+        return zip_path
+    except Exception as e:
+        log(f'APK 打包失败: {e!r}')
+        return None
+
+
+async def handle_apk_request(api, group_id):
+    """安装包命令：加密ZIP上传群文件 + 密码提示 + 浏览器链接兜底"""
+    # 下载/打包是阻塞操作，放线程池
+    zip_path = await asyncio.to_thread(ensure_apk_zip)
+    if not zip_path:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '⚠️ 安装包准备失败（下载或打包出错），稍后再试试～'
+        })
+        return
+    file_name = os.path.basename(zip_path)
+    size = os.path.getsize(zip_path)
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': f'📦 正在上传禁漫天堂 APP 安装包…（{format_bytes(size)}）'
+    })
+    # 上传（timeout 300 + 假失败检测 + 1 次重试）
+    result = None
+    for attempt in (1, 2):
+        try:
+            result = await api('upload_group_file', {
+                'group_id': group_id,
+                'file': zip_path,
+                'name': file_name,
+            }, timeout=300)
+        except Exception as e:
+            result = None
+            log(f'安装包上传异常(第{attempt}次): {e!r}')
+        retcode = result.get('retcode') if result else None
+        if retcode == 0:
+            break
+        if await _group_file_exists(api, group_id, file_name):
+            result = {'retcode': 0}
+            break
+        if attempt == 1:
+            await asyncio.sleep(5)
+    if result and (result.get('retcode') in (0, None)):
+        link = publish_http_link(zip_path)
+        msg = f'✅ 禁漫天堂 APP 安装包已上传：{file_name}\n{zip_password_note(zip_path)}'
+        if link:
+            msg += f'\n🌐 浏览器下载：{link}'
+        await api('send_group_msg', {'group_id': group_id, 'message': msg})
+    else:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '⚠️ 安装包上传失败，请稍后再试'
+        })
+
+
 async def handle_image_search(api, group_id, images):
     """识图处理：取图 → search_by_image → 缓存状态 → 回复（@+图 与 等待窗口 两处共用）"""
     if search_cooldown_hit(group_id):
@@ -892,6 +998,11 @@ async def handle_message(ws, api, msg, bot_qq):
                 'group_id': group_id,
                 'message': '✅ 当前没有正在下载的任务'
             })
+        return
+
+    # 安装包：@机器人 + jm安装包/安装包 等 → 禁漫天堂APP（加密ZIP）
+    if text.lower() in INSTALL_WORDS:
+        await handle_apk_request(api, group_id)
         return
 
     # 随机推荐：@机器人 + 随机/抽一本 等 → 近30天热门随机一本
