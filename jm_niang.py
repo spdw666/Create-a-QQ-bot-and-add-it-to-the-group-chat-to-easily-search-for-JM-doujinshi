@@ -53,6 +53,7 @@ NOTIFY_GROUP = int(os.environ.get('JM_NOTIFY_GROUP', '810152420'))
 FIRST_CONNECTION = True  # 首次连接不发恢复通知，重连才发
 OFFLINE_MARK = 0.0  # 最近一次重连时刻；time < 此值的 @ 消息视为掉线期间补推
 APOLOGY_SENT = {}  # group_id -> 最近道歉时刻（每群每次掉线只道歉一次，防刷屏）
+OFFLINE_EVENTS = []  # 掉线恢复时刻列表（每2小时汇总报告一次，替代每次掉线发通知）
 
 # 允许使用机器人的群白名单。空列表 = 所有群都能用。
 # 想限制只让某个群使用，填群的数字ID，例如: ALLOWED_GROUPS = [123456789]
@@ -1296,17 +1297,11 @@ async def handle_connection(ws):
         await ws.send(json.dumps({'action': action, 'params': params or {}, 'echo': echo}))
         return await asyncio.wait_for(fut, timeout)
 
-    # 掉线恢复通知：重连成功后向通知群发消息（首次连接不发）
+    # 掉线恢复：记录事件（不再每次发"已恢复上线"，改为每2小时汇总报告）
     if not FIRST_CONNECTION:
         OFFLINE_MARK = time.time()  # 标记重连时刻：此前时间的 @ 消息 = 掉线期间补推，需道歉
         APOLOGY_SENT.clear()
-        try:
-            await api('send_group_msg', {
-                'group_id': NOTIFY_GROUP,
-                'message': '🤖 JM娘 已恢复上线～（刚经历了掉线，抱歉）'
-            })
-        except Exception:
-            pass
+        OFFLINE_EVENTS.append(OFFLINE_MARK)
     FIRST_CONNECTION = False
 
     async def reader():
@@ -1365,6 +1360,40 @@ async def handle_connection(ws):
         log('NapCat 连接断开')
 
 
+async def offline_report_task():
+    """每 2 小时汇总一次掉线报告：次数 + 平均间隔（替代每次掉线刷屏通知）"""
+    while True:
+        try:
+            await asyncio.sleep(2 * 3600)
+            now = time.time()
+            window = [t for t in OFFLINE_EVENTS if now - t <= 2 * 3600 + 60]
+            if not window:
+                continue  # 2小时内没掉线，安静
+            OFFLINE_EVENTS[:] = [t for t in OFFLINE_EVENTS if t not in window]
+            n = len(window)
+            if n == 1:
+                interval_text = f'（约 {int((now - window[0]) / 60)} 分钟前恢复）'
+            else:
+                gaps = [window[i + 1] - window[i] for i in range(n - 1)]
+                avg_min = int(sum(gaps) / len(gaps) / 60)
+                interval_text = f'，平均每隔约 {avg_min} 分钟掉线一次'
+            msg = f'📊 掉线报告（过去2小时）：共掉线 {n} 次{interval_text}。当前已恢复在线 ✅'
+            # 独立 WS 连接发送（不依赖 handle_connection 的 api 闭包）
+            import json as _json
+            import uuid as _uuid
+            async with websockets.connect(f'ws://{WS_HOST}:{WS_PORT}') as ws:
+                await ws.send(_json.dumps({
+                    'action': 'send_group_msg',
+                    'params': {'group_id': NOTIFY_GROUP, 'message': msg},
+                    'echo': str(_uuid.uuid4()),
+                }))
+                await asyncio.wait_for(ws.recv(), timeout=15)
+            log(f'掉线报告已发: {n}次')
+        except Exception as e:
+            log(f'掉线报告任务出错: {e!r}')
+            await asyncio.sleep(60)
+
+
 async def cleanup_task():
     """每天清理一次超过 7 天的下载目录和HTTP分享文件"""
     while True:
@@ -1380,6 +1409,7 @@ async def main():
     uri = f'ws://{WS_HOST}:{WS_PORT}'
     log(f'JM娘 启动，连接 NapCat 正向WS服务: {uri} …')
     asyncio.create_task(cleanup_task())  # 后台定时清理
+    asyncio.create_task(offline_report_task())  # 每2小时掉线汇总报告
     # 断线自动重连
     while True:
         try:
