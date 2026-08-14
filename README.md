@@ -107,7 +107,7 @@
 
 - **每群限流 Rate limiting** —— 搜索类命令 10 秒冷却。*10 s per-group cooldown on search commands.*
 
-- **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃 15 秒自动恢复（免扫码快速登录）；掉线期间被 @ 的用户上线后自动 @回 道歉；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery within ~15 s of a crash; apology to users who @'d it while offline; "upgrading" reply during deploys; auto-accepts group invites.*
+- **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃 15 秒自动恢复（免扫码快速登录）；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery within ~15 s of a crash; "upgrading" reply during deploys; auto-accepts group invites.*
 
 - **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、7 天自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 7-day auto-cleanup.*
 
@@ -226,7 +226,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
-> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟持续恶化中），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。恢复后机器人会向 `JM_NOTIFY_GROUP` 每 2 小时汇总一次掉线报告，并对掉线期间 @ 它的用户逐个 @回 道歉。
+> 💡 **原理（懂行版）**：QQ Linux 客户端存在周期性崩溃 bug（间隔 30→20→10 分钟持续恶化中），watchdog 轮询 `ss -tln | grep :8081` 检测掉线，用 `-q <QQ号>` 快速登录参数拉起（token 有效即免扫码，全程约 15 秒）。恢复后机器人会向 `JM_NOTIFY_GROUP` 每 2 小时汇总一次掉线报告。
 >
 > 💡 *How it works: the Linux QQ client crashes periodically (~every 30 min). The watchdog polls port 8081 every minute, then relaunches QQ with the `-q <uin>` quick-login flag (token-based, no QR re-scan, ~15 s total). On recovery the bot notifies `JM_NOTIFY_GROUP` and @-apologizes to users who mentioned it while offline.*
 
@@ -274,10 +274,10 @@ Covers ZIP encryption, CQ escaping, search-variant generation, author command pa
 A：是部署时配置的 `JM_ZIP_PASSWORD`。必须加密——QQ 会扫描 ZIP 内容并静默删除成人图片（实测未加密 `retcode=1200` 上传失败，AES-128 加密后 `retcode=0` 正常）。用 WinRAR / 7-Zip / ZArchiver 解压即可。
 
 **Q：为什么机器人偶尔掉线？**
-A：QQ Linux 客户端本身有周期性崩溃 bug（间隔 30→20→10 分钟持续恶化），与项目代码无关。机器人已配备看门狗自动恢复（约 15 秒，免扫码），恢复后会通知群里并 @回 掉线期间找它的人。
+A：QQ Linux 客户端本身有周期性崩溃 bug（间隔 30→20→10 分钟持续恶化），与项目代码无关。机器人已配备看门狗自动恢复（约 15 秒，免扫码），恢复后每 2 小时向通知群汇总一次掉线报告。
 
 **Q：掉线期间发的命令会丢失吗？**
-A：QQ 重登后会补推离线消息，机器人上线后照常处理这些命令，并先 @你 道歉。
+A：会。QQ 重登后不补推离线消息（掉线期间的消息已被手机端接收），所以掉线窗口内的 @ 命令机器人收不到，上线后请重新发一次。
 
 **Q：升级机器人时群里会怎样？**
 A：升级窗口内 @机器人 会收到"🚧 正在升级中，请稍后～"；窗口通常只有几秒钟。
@@ -298,8 +298,8 @@ A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群
 ## 项目结构 Project layout
 
 ```
-jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页、掉线道歉、自动同意邀请
-                     # QQ bot main loop: OneBot WS client, command handling, uploads, pagination, offline apology, auto-accept invites
+jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页、自动同意邀请
+                     # QQ bot main loop: OneBot WS client, command handling, uploads, pagination, auto-accept invites
 jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索、缓存、清理
                      # jmcomic wrapper: download → AES ZIP, smart search, cache, cleanup
 maintain_reply.py    # 维护应答器：升级窗口内代答"正在升级中"（deploy.py 自动拉起/关闭）
