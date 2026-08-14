@@ -104,6 +104,8 @@
 
 - **每群限流 Rate limiting** —— 搜索类命令 10 秒冷却。*10 s per-group cooldown on search commands.*
 
+- **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃 15 秒自动恢复（免扫码快速登录）；掉线期间被 @ 的用户上线后自动 @回 道歉；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery within ~15 s of a crash; apology to users who @'d it while offline; "upgrading" reply during deploys; auto-accepts group invites.*
+
 - **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、7 天自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 7-day auto-cleanup.*
 
 ## 架构 Architecture
