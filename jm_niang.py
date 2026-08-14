@@ -846,26 +846,23 @@ async def handle_apk_request(api, group_id):
         'group_id': group_id,
         'message': f'📦 正在上传禁漫天堂 APP 安装包…（{format_bytes(size)}）'
     })
-    # 上传（timeout 300 + 假失败检测 + 1 次重试）
+    # 上传：只传一次不重试（防重复文件——NapCat 假失败检测 API 不稳定时重试会传两个）
+    # 失败时用浏览器链接兜底，用户重发一次即可
     result = None
-    for attempt in (1, 2):
-        try:
-            result = await api('upload_group_file', {
-                'group_id': group_id,
-                'file': zip_path,
-                'name': file_name,
-            }, timeout=300)
-        except Exception as e:
-            result = None
-            log(f'安装包上传异常(第{attempt}次): {e!r}')
-        retcode = result.get('retcode') if result else None
-        if retcode == 0:
-            break
+    try:
+        result = await api('upload_group_file', {
+            'group_id': group_id,
+            'file': zip_path,
+            'name': file_name,
+        }, timeout=300)
+    except Exception as e:
+        result = None
+        log(f'安装包上传异常: {e!r}')
+    retcode = result.get('retcode') if result else None
+    if retcode != 0:
+        # 假失败检测：事件确认失败但文件可能已传上
         if await _group_file_exists(api, group_id, file_name):
             result = {'retcode': 0}
-            break
-        if attempt == 1:
-            await asyncio.sleep(5)
     if result and (result.get('retcode') in (0, None)):
         link = publish_http_link(zip_path)
         msg = f'✅ 禁漫天堂 APP 安装包已上传：{file_name}\n{zip_password_note(zip_path)}'
@@ -873,10 +870,11 @@ async def handle_apk_request(api, group_id):
             msg += f'\n🌐 浏览器下载：{link}'
         await api('send_group_msg', {'group_id': group_id, 'message': msg})
     else:
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': '⚠️ 安装包上传失败，请稍后再试'
-        })
+        link = publish_http_link(zip_path)
+        msg = '⚠️ 安装包上传群文件失败'
+        if link:
+            msg += f'\n🌐 浏览器下载：{link}'
+        await api('send_group_msg', {'group_id': group_id, 'message': msg})
 
 
 async def handle_image_search(api, group_id, images):
