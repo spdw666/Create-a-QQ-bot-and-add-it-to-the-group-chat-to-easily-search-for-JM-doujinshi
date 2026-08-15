@@ -208,6 +208,7 @@ def get_album_page_count(album_id):
 
 def _pick_smallest_chapters(items, n=3):
     """从候选 (id, title) 里随机挑 n 本，并发拉详情后选章节数最少的一本。
+    每本详情最多等 8 秒（禁漫 API 偶发挂起时不拖垮整个命令）。
     返回 dict{id,title,author,chapter_count} 或 None（全部失败）"""
     import random
     from concurrent.futures import ThreadPoolExecutor
@@ -225,7 +226,15 @@ def _pick_smallest_chapters(items, n=3):
             return None
 
     with ThreadPoolExecutor(max_workers=n) as ex:
-        fetched = [r for r in ex.map(lambda x: _fetch(x[0], x[1]), picks) if r]
+        futures = [ex.submit(_fetch, *p) for p in picks]
+        fetched = []
+        for fut in futures:
+            try:
+                r = fut.result(timeout=8)  # 单本详情上限 8 秒，超时放弃该本
+                if r:
+                    fetched.append(r)
+            except Exception:
+                pass
     if not fetched:
         return None
     ch, aid, title, author = min(fetched, key=lambda x: x[0])
