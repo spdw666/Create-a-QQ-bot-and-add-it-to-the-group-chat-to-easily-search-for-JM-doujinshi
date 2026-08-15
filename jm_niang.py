@@ -881,29 +881,19 @@ def ensure_apk_zip():
                 log(f'APK 下载失败({url[:50]}): {e!r}')
         if not os.path.exists(apk_path):
             return None
-    # 苹果 iOS 描述文件（企业分发安装包；官网有CF防护程序下不到，需手动放置 apk/ 目录）
-    ios_path = os.path.join(APK_DIR, 'JMComic3.mobileconfig')
-    if not os.path.exists(ios_path):
-        log('iOS 描述文件缺失（apk/JMComic3.mobileconfig），只打安卓包')
-    # 苹果安装说明
-    ios_note = ('【苹果iPhone/iPad 安装步骤】\n'
-                '1. 用 Safari 打开"禁漫天堂APP_苹果.mobileconfig"文件\n'
-                '2. 按提示安装描述文件：设置 → 通用 → VPN与设备管理 → JMComic3 → 安装\n'
-                '3. 安装完成后在描述文件详情页点"信任"即可打开APP\n'
-                '（官方企业分发描述文件，应用大小约3.6M）\n')
-    ios_txt = os.path.join(APK_DIR, '苹果用户安装说明.txt')
+    # 苹果用户下载地址（txt 文件，Safari 打开链接下载苹果版）
+    ios_note = '苹果用户请在 Safari 浏览器打开以下网址下载安装：\nhttps://jmcomic-zzz.one/ios_app/index.php\n'
+    ios_txt = os.path.join(APK_DIR, '苹果用户下载地址.txt')
     with open(ios_txt, 'w', encoding='utf-8') as f:
         f.write(ios_note)
-    # AES-128 加密打包（安卓APK + 苹果描述文件 + 苹果说明）
+    # AES-128 加密打包（安卓APK + 苹果下载地址txt）
     zip_path = os.path.join(APK_DIR, '禁漫天堂安装包_安卓+苹果.zip')
     try:
         with pyzipper.AESZipFile(zip_path, 'w', compression=pyzipper.ZIP_DEFLATED,
                                  encryption=pyzipper.WZ_AES) as zf:
             zf.setpassword(ZIP_PASSWORD.encode())
             zf.write(apk_path, arcname='禁漫天堂APP_安卓.apk')
-            if os.path.exists(ios_path):
-                zf.write(ios_path, arcname='禁漫天堂APP_苹果.mobileconfig')
-            zf.write(ios_txt, arcname='苹果用户安装说明.txt')
+            zf.write(ios_txt, arcname='苹果用户下载地址.txt')
         log(f'安装包打包完成: {zip_path}')
         return zip_path
     except Exception as e:
@@ -928,7 +918,7 @@ async def handle_apk_request(api, group_id):
     msg = f'📱 禁漫天堂 APP 安装包（安卓+苹果，{format_bytes(size)}）：\n'
     if link:
         msg += f'🌐 浏览器下载：{link}\n'
-    msg += (f'📦 包内：安卓.apk + 苹果.mobileconfig + 安装说明.txt\n'
+    msg += (f'📦 包内：安卓.apk + 苹果用户下载地址.txt\n'
             f'{zip_password_note(zip_path)}\n'
             f'⏳ 同时尝试上传群文件，请稍候…')
     await api('send_group_msg', {'group_id': group_id, 'message': msg})
