@@ -580,13 +580,17 @@ def _qq_process_etime():
 
 
 def _parse_etime(t):
-    """ps etime 文本 → 秒；解析失败返回 None"""
+    """ps etime 文本 → 秒；支持 MM:SS / HH:MM:SS / D-HH:MM:SS 三种格式；失败返回 None"""
     try:
         if '-' in t:
-            d, rest = t.split('-')
+            d, rest = t.split('-', 1)
             h, m, s = rest.split(':')
             return int(d) * 86400 + int(h) * 3600 + int(m) * 60 + int(s)
-        h, m, s = t.split(':')
+        parts = t.split(':')
+        if len(parts) == 2:  # MM:SS（不足 1 小时）
+            m, s = parts
+            return int(m) * 60 + int(s)
+        h, m, s = parts
         return int(h) * 3600 + int(m) * 60 + int(s)
     except Exception:
         return None

@@ -88,6 +88,17 @@ def test_escape_cq_blocks_injection():
     assert '\n' not in escape_cq('a\nb')
 
 
+def test_parse_etime():
+    """ps etime 三种格式：MM:SS / HH:MM:SS / D-HH:MM:SS"""
+    import jm_niang
+    p = jm_niang._parse_etime
+    assert p('08:44') == 8 * 60 + 44
+    assert p('07:46:00') == 7 * 3600 + 46 * 60
+    assert p('2-03:04:05') == 2 * 86400 + 3 * 3600 + 4 * 60 + 5
+    assert p('') is None
+    assert p('abc') is None
+
+
 def test_search_album_sanitize_injection_chars():
     """&/= 注入字符应被清洗；清洗后为空则不发起搜索"""
     from jm_download import search_album
