@@ -908,7 +908,7 @@ def ensure_apk_zip():
 
 
 async def handle_apk_request(api, group_id):
-    """安装包命令：加密ZIP上传群文件 + 密码提示 + 浏览器链接兜底"""
+    """安装包命令：HTTP 链接秒回 → 群文件上传尽力而为（大文件富媒体上传受 QQ 风控限制，不可靠）"""
     # 下载/打包是阻塞操作，放线程池
     zip_path = await asyncio.to_thread(ensure_apk_zip)
     if not zip_path:
@@ -919,12 +919,16 @@ async def handle_apk_request(api, group_id):
         return
     file_name = os.path.basename(zip_path)
     size = os.path.getsize(zip_path)
-    await api('send_group_msg', {
-        'group_id': group_id,
-        'message': f'📦 正在上传禁漫天堂 APP 安装包…（{format_bytes(size)}）'
-    })
-    # 上传：只传一次不重试（防重复文件——NapCat 假失败检测 API 不稳定时重试会传两个）
-    # 失败时用浏览器链接兜底，用户重发一次即可
+    link = publish_http_link(zip_path)
+    # 1. 先发浏览器链接 + 密码（秒回，不依赖上传耗时）
+    msg = f'📱 禁漫天堂 APP 安装包（安卓+苹果，{format_bytes(size)}）：\n'
+    if link:
+        msg += f'🌐 浏览器下载：{link}\n'
+    msg += (f'📦 包内：安卓.apk + 苹果.mobileconfig + 安装说明.txt\n'
+            f'{zip_password_note(zip_path)}\n'
+            f'⏳ 同时尝试上传群文件，请稍候…')
+    await api('send_group_msg', {'group_id': group_id, 'message': msg})
+    # 2. 上传：只传一次不重试（防重复文件——NapCat 假失败检测 API 不稳定时重试会传两个）
     result = None
     try:
         result = await api('upload_group_file', {
@@ -940,20 +944,13 @@ async def handle_apk_request(api, group_id):
         # 假失败检测：事件确认失败但文件可能已传上
         if await _group_file_exists(api, group_id, file_name):
             result = {'retcode': 0}
-    if result and (result.get('retcode') in (0, None)):
-        link = publish_http_link(zip_path)
-        msg = (f'✅ 禁漫天堂安装包已上传：{file_name}\n'
-               f'📦 包内：安卓.apk + 苹果.mobileconfig + 安装说明.txt\n'
-               f'{zip_password_note(zip_path)}')
-        if link:
-            msg += f'\n🌐 浏览器下载：{link}'
-        await api('send_group_msg', {'group_id': group_id, 'message': msg})
-    else:
-        link = publish_http_link(zip_path)
-        msg = '⚠️ 群文件上传状态未知，请查看群文件；若没有收到，可用下方链接下载'
-        if link:
-            msg += f'\n🌐 浏览器下载：{link}'
-        await api('send_group_msg', {'group_id': group_id, 'message': msg})
+    if not (result and result.get('retcode') in (0, None)):
+        # 上传未成功：提示用户用链接（链接已发过，不重复发）
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '⚠️ 群文件上传未成功，请用上方浏览器链接下载～'
+        })
+    # 上传成功则静默（文件已出现在群里，链接消息里已有全部信息）
 
 
 async def handle_image_search(api, group_id, images):
