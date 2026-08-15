@@ -1540,11 +1540,11 @@ async def handle_connection(ws):
 
 
 async def cleanup_task():
-    """每天清理一次超过 7 天的下载目录和HTTP分享文件"""
+    """每天清理一次超过 24 小时的下载目录和HTTP分享文件"""
     while True:
         try:
-            await asyncio.to_thread(cleanup_old_dirs, DOWNLOAD_DIR, 7)
-            await asyncio.to_thread(cleanup_old_dirs, SHARE_DIR, 7, False)
+            await asyncio.to_thread(cleanup_old_dirs, DOWNLOAD_DIR, 1)
+            await asyncio.to_thread(cleanup_old_dirs, SHARE_DIR, 1, False)
         except Exception as e:
             log(f'清理任务出错: {e!r}')
         await asyncio.sleep(24 * 3600)

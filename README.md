@@ -112,7 +112,7 @@
 
 - **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃自动拉起（`-q` 快速登录免扫码，约 1-2 分钟恢复；10 分钟冷却）；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery (~1-2 min: 1-min poll + `-q` quick login, 10-min cooldown); "upgrading" reply during deploys; auto-accepts group invites.*
 
-- **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、7 天自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 7-day auto-cleanup.*
+- **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、24 小时自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 24-hour auto-cleanup.*
 
 ## 架构 Architecture
 
