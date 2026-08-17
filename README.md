@@ -67,6 +67,8 @@
 | `@bot 不对` | 重新搜索上一次的结果（含识图重搜） | Re-run the last search (image search included) |
 | `@bot 取消` | 取消正在进行的下载 | Cancel the in-progress download |
 | `@bot 说明` | 查看使用说明 | Show the help text |
+| `@bot 菜单` / `@bot 按钮` | 返回按钮式命令面板（`@bot 菜单`/`@bot 按钮`/`@bot 面板`） | Show the button-style command panel |
+| **免@按钮**（无需@） | 直接发「随机」「今日属性」「日榜」「周榜」「月榜」「安装包」「任务」「自查」「说明」即可触发对应功能，等同点按钮 | **Button words** (no mention needed): just send `随机` / `今日属性` / `日榜` / `周榜` / `月榜` / `安装包` / `任务` / `自查` / `说明` directly to trigger the same action |
 
 ## 效果示例 Demo
 

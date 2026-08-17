@@ -188,8 +188,33 @@ HELP_TEXT = (
     '· 数字ID可在禁漫网页/APP的漫画详情页找到'
 )
 
+# 按钮式命令菜单（@我 菜单 / 按钮 时返回）。NapCat/OneBot v11 协议不支持可点击按钮，
+# 这里做成"按钮网格"清单：无参数功能直接发按钮词（免@），带参数功能照抄按钮上的格式 @我 即可。
+BUTTON_MENU = (
+    '🎛️ JM娘 命令面板（点下方按钮词，直接在群里发送即可）\n'
+    '————————————————\n\n'
+    '🟦 直接发送 · 无需@我\n'
+    '   〔随机〕〔今日属性〕〔日榜〕〔周榜〕\n'
+    '   〔月榜〕〔安装包〕〔任务〕〔自查〕\n\n'
+    '🟩 需@我 + 参数\n'
+    '   〔下载〕@我 + 数字ID\n'
+    '   〔搜索〕@我 + 关键词\n'
+    '   〔作者〕@我 作者 + 名字\n'
+    '   〔标签〕@我 标签 + 名称\n'
+    '   〔详情〕@我 详情 + ID\n'
+    '   〔识图〕@我 识图 → 20秒内发图\n\n'
+    '🟨 其他\n'
+    '   〔菜单〕@我 菜单 · 〔说明〕@我 说明\n'
+    '   搜索超过5本：直接发〔下一页〕/〔第3页〕翻页\n'
+    '   取消下载：@我 取消\n'
+    f'   🔐 压缩包密码：{ZIP_PASSWORD}\n'
+)
+
+# 菜单命令词（@我 菜单/按钮 → 返回 BUTTON_MENU）
+MENU_WORDS = {'菜单', '按钮', '面板', 'menu', 'button'}
+
 # 说明类命令词
-HELP_WORDS = {'说明', '帮助', 'help', '使用说明', 'usage', '菜单', '怎么用'}
+HELP_WORDS = {'说明', '帮助', 'help', '使用说明', 'usage', '怎么用'}
 
 # 取消类命令词
 CANCEL_WORDS = {'取消', '停止', 'stop', 'cancel', '算了'}
@@ -995,6 +1020,113 @@ async def handle_image_search(api, group_id, images):
     })
 
 
+# 免@按钮词 → 对应功能（用户直接发这些词即可触发，等同"点按钮"）
+# 只收录无参数功能，防普通聊天误触发；词须精确匹配（fullmatch，见 handle_no_at_button）
+NO_AT_BUTTONS = {
+    '随机': 'random', '推荐': 'random', '抽一本': 'random', '来一本': 'random', '随缘': 'random',
+    '今日属性': 'tag', '属性': 'tag',
+    '日榜': 'rank:day', '周榜': 'rank:week', '月榜': 'rank:month',
+    '安装包': 'apk', '禁漫': 'apk', '禁漫天堂': 'apk', '禁漫安装包': 'apk', '天堂安装包': 'apk',
+    '任务': 'task', '队列': 'task', '排队': 'task',
+    '自查': 'selfcheck',
+    '说明': 'help', '帮助': 'help', '菜单': 'menu', '按钮': 'menu',
+}
+
+
+async def handle_no_at_button(api, group_id, text):
+    """免@按钮路由：text 精确命中 NO_AT_BUTTONS 时执行对应功能，返回 True；否则返回 False（交由上层静默/翻页）"""
+    low = text.lower().strip()
+    action = NO_AT_BUTTONS.get(low)
+    if action is None:
+        # 支持中文全角/空格等差异很小，直接精确匹配即可；未命中返回，不影响翻页逻辑
+        return False
+
+    async def send(message):
+        await api('send_group_msg', {'group_id': group_id, 'message': message})
+
+    if action in ('random', 'tag'):
+        if search_cooldown_hit(group_id):
+            await send('⏳ 操作太快啦，等几秒再试试～')
+            return True
+        if action == 'random':
+            await send('🎲 正在从近30天最火的本子里随机抽一本，稍等…')
+            info = await asyncio.to_thread(get_random_hot_album)
+            if not info:
+                await send('❌ 随机推荐失败（网络波动或禁漫拦截），稍后再试试～')
+                return True
+            await send(f'🎲 随机推荐（近30天热门）\n'
+                       f'📕《{escape_cq(info["title"])}》\n'
+                       f'✍️ 作者：{escape_cq(info["author"] or "未知")}\n'
+                       f'📚 共 {info["chapter_count"]} 章\n'
+                       f'🔢 ID：{info["id"]}\n'
+                       f'📎 https://18comic.vip/album/{info["id"]}\n'
+                       f'想要？@我 + 发送这个ID 即可打包下载')
+        else:
+            await send('🎭 正在为你占卜今日属性，稍等…')
+            info = await asyncio.to_thread(get_random_tag_album)
+            if not info:
+                await send('❌ 占卜失败（网络波动或禁漫拦截），稍后再试试～')
+                return True
+            await send(f'🎭 今日你的属性是【{escape_cq(info["tag"])}】！\n'
+                       f'📕 附赠一本「{escape_cq(info["tag"])}」本子（章节少好下载）：\n'
+                       f'《{escape_cq(info["title"])}》\n'
+                       f'✍️ 作者：{escape_cq(info["author"] or "未知")}  章节：{info["chapter_count"]}章\n'
+                       f'🔢 ID：{info["id"]}\n'
+                       f'想要？@我 + 发送这个ID 即可打包下载')
+        return True
+
+    if action.startswith('rank:'):
+        rank_type = action.split(':', 1)[1]
+        cn = {'day': '日榜', 'week': '周榜', 'month': '月榜'}[rank_type]
+        if search_cooldown_hit(group_id):
+            await send('⏳ 查询太快啦，等几秒再试试～')
+            return True
+        await send(f'📊 正在获取{cn}，稍等…')
+        results = await asyncio.to_thread(get_ranking, rank_type)
+        if results is None:
+            await send('❌ 获取榜单失败（网络波动或禁漫拦截），稍后再试试～')
+            return True
+        if not results:
+            await send('榜单暂无数据')
+            return True
+        now = time.time()
+        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
+            SEARCH_STATE.pop(gid, None)
+        SEARCH_STATE[group_id] = {
+            'head': f'📊 {cn}',
+            'results': results, 'page': 1, 'ts': now,
+            'kind': 'rank', 'keyword': rank_type,
+        }
+        await send(render_search_page(SEARCH_STATE[group_id], 1))
+        return True
+
+    if action == 'apk':
+        await handle_apk_request(api, group_id)
+        return True
+
+    if action == 'task':
+        tasks_txt = render_task_status()
+        if tasks_txt:
+            await send(f'📋 当前任务：\n{tasks_txt}')
+        else:
+            await send('✅ 当前没有正在处理的任务，可以直接@我下载哦～')
+        return True
+
+    if action == 'selfcheck':
+        await send(render_self_check())
+        return True
+
+    if action == 'help':
+        await send(HELP_TEXT)
+        return True
+
+    if action == 'menu':
+        await send(BUTTON_MENU)
+        return True
+
+    return False
+
+
 async def handle_message(ws, api, msg, bot_qq):
     """处理一条消息事件"""
     if msg.get('message_type') != 'group':
@@ -1028,6 +1160,12 @@ async def handle_message(ws, api, msg, bot_qq):
         page_num = extract_page(text) if text else None
         if text and (text.lower() in NEXT_WORDS or page_num):
             await handle_next_page(api, group_id, silent=True, page=page_num)
+            return
+        # 免@按钮命令：直接发「随机/日榜/安装包/任务/自查…」等按钮词即可触发（等同点按钮）
+        if text:
+            handled = await handle_no_at_button(api, group_id, text)
+            if handled:
+                return
         return
     log(f'收到群 {group_id} 用户 {user_id} 命令: {text[:40]!r}')
 
@@ -1036,6 +1174,14 @@ async def handle_message(ws, api, msg, bot_qq):
         await api('send_group_msg', {
             'group_id': group_id,
             'message': HELP_TEXT
+        })
+        return
+
+    # 菜单命令：@机器人 + 菜单/按钮/面板 → 返回按钮式命令面板
+    if text.lower() in MENU_WORDS:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': BUTTON_MENU
         })
         return
 

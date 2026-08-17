@@ -423,3 +423,43 @@ def test_handle_message_branches():
     assert extract_detail_id('预览 123456') == '123456'
     assert extract_detail_id('350234') is None  # 纯数字走下载命令，不是详情
     assert extract_detail_id('随便详情') is None
+    # 11. 菜单命令：@我 菜单 → 按钮式命令面板
+    run('菜单')
+    assert '命令面板' in sent[0][1]['message'] and '随机' in sent[0][1]['message']
+    run('按钮')
+    assert '命令面板' in sent[0][1]['message']
+    # 11b. 免@按钮：直接发「随机」触发随机推荐（等同点按钮）
+    jm_niang.get_random_hot_album = lambda: {'id': '123456', 'title': '随机本',
+                                             'author': '作者A', 'chapter_count': 3}
+    run_no_at('随机')
+    joined_btn = '\n'.join(p['message'] for _, p in sent)
+    assert '随机推荐' in joined_btn and 'ID：123456' in joined_btn
+    # 11c. 免@按钮：直接发「今日属性」触发
+    jm_niang.get_random_tag_album = lambda: {'tag': 'NTR', 'id': '654321',
+                                             'title': '属性本', 'author': '作者B',
+                                             'chapter_count': 2}
+    run_no_at('今日属性')
+    assert '今日你的属性是【NTR】' in sent[-1][1]['message']
+    # 11d. 免@按钮：直接发「日榜」触发榜单
+    jm_niang.get_ranking = lambda rt: [{'title': '榜1', 'chapter_count': 1,
+                                        'id': '400000', 'author': 'a'}]
+    run_no_at('日榜')
+    joined_rank_noat = '\n'.join(p['message'] for _, p in sent)
+    assert '日榜' in joined_rank_noat and 'ID：400000' in joined_rank_noat
+    # 11e. 免@按钮：直接发「任务」触发（无任务时提示）
+    jm_niang.ACTIVE_DOWNLOADS.clear() if hasattr(jm_niang, 'ACTIVE_DOWNLOADS') else None
+    run_no_at('任务')
+    assert ('当前任务' in sent[-1][1]['message'] or '没有正在处理' in sent[-1][1]['message'])
+    # 11f. 免@按钮：直接发「自查」触发
+    run_no_at('自查')
+    assert '自查报告' in sent[-1][1]['message']
+    # 11g. 免@按钮：直接发「说明」触发
+    run_no_at('说明')
+    assert '使用说明' in sent[-1][1]['message']
+    # 11h. 免@未命中按钮词（普通聊天）静默
+    run_no_at('这是聊天不是命令')
+    assert sent == []
+    # 11i. NO_AT_BUTTONS 词表完整性（收录了核心无参功能）
+    from jm_niang import NO_AT_BUTTONS
+    assert '随机' in NO_AT_BUTTONS and '今日属性' in NO_AT_BUTTONS and '日榜' in NO_AT_BUTTONS
+    assert '安装包' in NO_AT_BUTTONS and '任务' in NO_AT_BUTTONS and '自查' in NO_AT_BUTTONS
