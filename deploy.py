@@ -84,6 +84,7 @@ def main():
         'README.md': '/opt/jmniang/README.md',
         'requirements.txt': '/opt/jmniang/requirements.txt',
         'maintain_reply.py': '/opt/jmniang/maintain_reply.py',
+        'qq_official_bot.py': '/opt/jmniang/qq_official_bot.py',
     }
     import os
     base = os.path.basename(local_file)
