@@ -361,10 +361,11 @@ def test_handle_message_branches():
     run('识图')
     assert '秒内直接发送图片' in sent[-1][1]['message']
     assert GROUP in jm_niang.IMAGE_WAIT
-    # 6i2. 纯@（空文本，用户"先@一下再发图"的习惯）→ 也进入等待窗口
+    # 6i2. 纯@（空文本）→ 输出按钮功能菜单（不再进入识图等待窗口）
+    jm_niang.IMAGE_WAIT.pop(GROUP, None)  # 清掉 6i 设置的等待窗口
     run('')
-    assert '秒内直接发送图片' in sent[-1][1]['message']
-    assert GROUP in jm_niang.IMAGE_WAIT
+    assert '命令面板' in sent[-1][1]['message']
+    assert GROUP not in jm_niang.IMAGE_WAIT
     # 6j. 等待窗口内免@发图 → 自动识图
     jm_niang.IMAGE_WAIT[GROUP] = {'user_id': 999, 'expires': _time.time() + 20}
     run_img_no_at()

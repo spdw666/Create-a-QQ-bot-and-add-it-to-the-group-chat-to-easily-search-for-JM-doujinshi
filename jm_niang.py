@@ -138,7 +138,7 @@ def publish_http_link(zip_path):
 HELP_TEXT = (
     '📖 JM娘 使用说明\n'
     '———————————————\n'
-    '💡 触发方式：先 @我，再发送命令\n\n'
+    '💡 触发方式：只 @我（不带命令）= 弹出按钮菜单；或 @我 + 命令\n\n'
     '📥 下载漫画：@我 + 数字ID\n'
     '   例：@JM娘 1460484\n'
     '   （也支持 @JM娘 /jm1460484）\n'
@@ -1552,8 +1552,16 @@ async def handle_message(ws, api, msg, bot_qq):
         await handle_image_search(api, group_id, images)
         return
 
-    # 识图意图：@机器人 + 识图/搜图，或纯@（空文本）→ 进入20秒等待窗口，期间直接发图即可
-    if not text or text.lower() in IMAGE_WAIT_WORDS:
+    # 纯@（空文本、无图）→ 输出按钮功能菜单（用户@一下就能看到所有可用的按钮功能）
+    if not text:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': BUTTON_MENU
+        })
+        return
+
+    # 识图意图：@机器人 + 识图/搜图 → 进入20秒等待窗口，期间直接发图即可
+    if text.lower() in IMAGE_WAIT_WORDS:
         IMAGE_WAIT[group_id] = {'user_id': user_id, 'expires': time.time() + IMAGE_WAIT_SECONDS}
         await api('send_group_msg', {
             'group_id': group_id,

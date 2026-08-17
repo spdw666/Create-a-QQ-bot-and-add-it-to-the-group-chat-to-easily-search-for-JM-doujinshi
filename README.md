@@ -46,7 +46,7 @@
 
 ## 功能 Features
 
-群成员 `@机器人` + 命令。 · Mention the bot (`@bot`) followed by a command:
+群成员 `@机器人` + 命令（只 `@机器人` 不带命令会自动回复按钮菜单）。 · Mention the bot (`@bot`) followed by a command (mentioning `@bot` alone returns the button menu):
 
 | 命令 Command | 说明 | Description |
 |---|---|---|
