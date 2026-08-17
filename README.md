@@ -238,9 +238,6 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 # 由 cron 每分钟执行；脚本内置 10 分钟冷却，防止反复重启风暴（注意：冷却期内再崩不会拉起）
 # ⚠️ 检测用 /usr/sbin/ss 绝对路径——用户 crontab 默认 PATH 不含 /usr/sbin，用裸 ss 会一直误判掉线并误杀 QQ
 * * * * * /opt/jmniang/napcat_watchdog.sh
-
-# qq_daily_restart.sh —— 每天 04:30 主动重启一次 QQ（清理长时间运行的内存泄漏）
-30 4 * * * /opt/jmniang/qq_daily_restart.sh
 ```
 
 > 💡 **原理（懂行版）**：QQ Linux 客户端会周期性崩溃（此前误以为间隔 30→20→10 分钟恶化——**真相是 watchdog 误杀**：v4/v5 用裸 `ss` 检测，用户 crontab PATH 不含 /usr/sbin 导致永远误判掉线、冷却结束就杀 QQ，周期数=冷却时间变化；v6 改 `/usr/sbin/ss` 绝对路径后已修复）。另有腾讯风控因素（详见 [docs/qq-crash-issue.md](docs/qq-crash-issue.md)）。watchdog 每 1 分钟检测 8081，掉线用 `-q <QQ号>` 快速登录拉起（token 有效即免扫码，拉起约 15-30 秒；10 分钟冷却期内不重复拉起）。
@@ -326,8 +323,7 @@ deploy.py            # 无感部署脚本：应答器→停机→上传→恢复
                      # zero-downtime deploy script: replier → stop → upload → restore → cleanup, auto-rollback on failure
 napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉起 QQ（快速登录免扫码）
                      # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (token-based quick login)
-qq_daily_restart.sh  # 每日 04:30 重启 QQ，清理长时间运行的内存泄漏
-                     # daily 04:30 QQ restart to clear long-running memory leaks
+qq_daily_restart.sh  # （已移除）原是每日 04:30 重启 QQ，崩溃误判时代产物，真相大白后取消；现在 QQ 只由 watchdog 按需拉起
 test_jm_download.py  # 离线单元测试（15 项）· offline unit tests (15 cases)
 .env.example         # 环境变量示例 · environment variable template
 start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
