@@ -70,7 +70,7 @@ async def _ensure_token():
         )
         token = data.get('access_token')
         if not token:
-            raise RuntimeError(f'token 获取失败: {data}')
+            raise RuntimeError(f'token 获取失败: {data.get("message", "未知错误")}')
         _access_token = token
         _token_expires_at = time.time() + int(data.get('expires_in', 7200))
         log = lambda msg: print(msg, flush=True)
@@ -361,7 +361,7 @@ async def main():
                 print('[ws] 需重连 (op=7)', flush=True)
                 break
             elif op == 9:
-                print(f'[ws] 鉴权失败: {data}', flush=True)
+                print('[ws] 鉴权失败 (op=9)，token 可能过期', flush=True)
                 break
 
         hb_task.cancel()
