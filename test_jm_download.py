@@ -576,21 +576,18 @@ def test_cancel_download_does_not_rmtree(tmp_path):
 
 
 def test_progress_interval_adaptive():
-    """进度条间隔：大本子全程约 TARGET_PROGRESS_MSGS 条；小本子用短间隔（下限5s）正常报进度"""
-    from jm_niang import progress_interval, TARGET_PROGRESS_MSGS, AVG_SECONDS_PER_PAGE, PROGRESS_INTERVAL_MIN
-    # 几十页小本子：短间隔（下限5s），而非一条不发
-    small = progress_interval(20)
-    assert small == max(PROGRESS_INTERVAL_MIN, 20 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS)
-    assert small <= 5  # 20页→3s被下限抬到5s
-    # 中等本子：间隔 = 总时长/目标条数
-    mid = progress_interval(200)
-    assert abs(mid - 200 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS) < 0.01
-    # 大本子：间隔明显更大，全程总条数被控制约7条
-    big = progress_interval(3000)
-    assert big > mid
-    assert abs(big - 3000 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS) < 0.01
-    # 超大小本子间隔继续拉长
-    assert progress_interval(30000) > big
+    """进度条：目标条数随页数减少（20页≈2条、40页≈3条），大本子封顶7条，间隔由总时长/目标条数反推"""
+    from jm_niang import _target_progress_msgs, progress_interval, TARGET_PROGRESS_MSGS, \
+        AVG_SECONDS_PER_PAGE, PROGRESS_INTERVAL_MIN
+    # 小本子目标条数少：20页→2条、40页→3条
+    assert _target_progress_msgs(20) == 2
+    assert _target_progress_msgs(40) == 3
+    assert _target_progress_msgs(15) == 2  # 下限2条
+    # 大本子封顶7条
+    assert _target_progress_msgs(30000) == TARGET_PROGRESS_MSGS
+    # 间隔 = max(下限, 总时长/目标条数)
+    assert progress_interval(40) == max(PROGRESS_INTERVAL_MIN, 40 * AVG_SECONDS_PER_PAGE / 3)
+    assert progress_interval(30000) == 30000 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS
     # 未知/非正数 → 默认 10s
     assert progress_interval(0) == 10
     assert progress_interval(None) == 10

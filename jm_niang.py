@@ -653,21 +653,33 @@ def render_task_status():
     return '\n'.join(lines)
 
 
-# 进度条总条数控制：大本子全程进度消息约控制在 TARGET_PROGRESS_MSGS 条，防刷屏。
-TARGET_PROGRESS_MSGS = 7
+# 进度条总条数控制：大本子（~90页起）全程约 7 条，小本子（几十页）目标条数随页数减少（2~4条），控制总量不刷屏。
+TARGET_PROGRESS_MSGS = 7          # 大本子封顶的总进度条数
+PROGRESS_MIN_MSGS = 2             # 小本子最少 2 条
+PROGRESS_PAGES_PER_MSG = 15       # 约每 15 页增加 1 条（线性，封顶 7）
 # 单页平均下载耗时（秒），用于估算总时长进而反推报进度间隔（SECONDS_PER_PAGE_MIN/MAX 的中值）
 AVG_SECONDS_PER_PAGE = 1.05
-# 进度间隔下限（秒）：仅防消息过密，小本子（很快下完）用短间隔多报几条即可
-PROGRESS_INTERVAL_MIN = 5
+# 进度间隔下限（秒）：仅防消息过密导致刷屏
+PROGRESS_INTERVAL_MIN = 8
+
+
+def _target_progress_msgs(total_pages):
+    """根据页数确定全程目标进度条数：小本子少（≥2条）、大本子封顶 TARGET_PROGRESS_MSGS。"""
+    if not total_pages or total_pages <= 0:
+        return TARGET_PROGRESS_MSGS
+    import math
+    target = total_pages / PROGRESS_PAGES_PER_MSG
+    return max(PROGRESS_MIN_MSGS, min(TARGET_PROGRESS_MSGS, int(math.ceil(target))))
 
 
 def progress_interval(total_pages):
     """根据本子页数反推「下载中」报进度间隔（秒）。
-    大本子全程约 TARGET_PROGRESS_MSGS 条；小本子（十几~几十页）预估时长短，用短间隔（下限5s）
-    在较短时间内自然报几条，进度感足够又不至于一条不发。页数未知用默认 10s。"""
+    间隔 = 预估总时长 / 目标条数。小本子目标条数少（20页→2条、40页→3条）总条数克制；
+    大本子目标条数封顶 7 条，全程约 7 条。页数未知用默认 10s。"""
     if not total_pages or total_pages <= 0:
         return 10
-    interval = total_pages * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS
+    target = _target_progress_msgs(total_pages)
+    interval = total_pages * AVG_SECONDS_PER_PAGE / target
     return max(PROGRESS_INTERVAL_MIN, interval)
 
 
