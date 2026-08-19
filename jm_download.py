@@ -160,9 +160,23 @@ def find_cached_zip(album_id, work_dir=None):
     """
     查找该漫画是否已下载过（缓存命中）。
 
+    返回前校验 ZIP 有效性：损坏/无效的缓存文件删除并视为无缓存（返回 None），
+    避免命中坏缓存后 ensure_encrypted_zip 打开失败导致整个下载失败。
+
     :return: (zip绝对路径, 标题) 或 (None, None)
     """
-    zips = glob.glob(os.path.join(_task_dir(album_id, work_dir), '**', '*.zip'), recursive=True)
+    import zipfile
+    task_dir = _task_dir(album_id, work_dir)
+    zips = glob.glob(os.path.join(task_dir, '**', '*.zip'), recursive=True)
+    for zip_path in list(zips):
+        if not zipfile.is_zipfile(zip_path):
+            # 损坏/截断的 ZIP（常见于下载/打包/上传过程中被中断）：清掉，当作没缓存
+            print(f'[缓存] 移除损坏的ZIP: {zip_path}', flush=True)
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
+            zips.remove(zip_path)
     if not zips:
         return None, None
     zip_path = zips[0]

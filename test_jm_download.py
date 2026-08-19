@@ -507,3 +507,42 @@ def test_cancelable_downloader_before_image():
     assert raised is True
 
     CANCELLED_ALBUMS.clear()
+
+
+def test_find_cached_zip_removes_corrupt(tmp_path):
+    """find_cached_zip 应移除损坏/无效 PDF... ZIP，返回无缓存而非命中坏缓存"""
+    import jm_download
+    from jm_download import find_cached_zip
+
+    # 构造一个假漫画目录，放入一个"损坏"的 zip（非 zip 内容）和一个有效 zip
+    task_dir = jm_download._task_dir('999999', str(tmp_path))
+    import os
+    os.makedirs(os.path.join(task_dir, '章节1'), exist_ok=True)
+
+    corrupt = os.path.join(task_dir, '章节1', '[JM999999]坏.xip')
+    # 保存副本 .zip 破坏名
+    corrupt_zip = corrupt[:-4] + '.zip'
+    with open(corrupt_zip, 'w', encoding='utf-8') as f:
+        f.write('这不是一个 zip 文件，仅测试损坏缓存')
+
+    # 有效 zip（用真实 zip）
+    good_zip = os.path.join(task_dir, '[JM999999]好.zip')
+    import zipfile as _zf
+    with _zf.ZipFile(good_zip, 'w') as zf:
+        zf.writestr('a.txt', 'hello')
+
+    # find_cached_zip：应删除坏 zip，命中好 zip
+    path, title = find_cached_zip('999999', str(tmp_path))
+    assert title == '好', f'title={title!r}'
+    assert os.path.basename(path) == '[JM999999]好.zip'
+    # 坏 zip 应已被删除
+    assert not os.path.exists(corrupt_zip)
+
+    # 只剩损坏 zip 时：返回 (None, None) 且坏文件被删
+    os.remove(good_zip)
+    bad = os.path.join(task_dir, '[JM999999]坏2.zip')
+    with open(bad, 'w', encoding='utf-8') as f:
+        f.write('still not a zip')
+    path2, title2 = find_cached_zip('999999', str(tmp_path))
+    assert path2 is None and title2 is None
+    assert not os.path.exists(bad)
