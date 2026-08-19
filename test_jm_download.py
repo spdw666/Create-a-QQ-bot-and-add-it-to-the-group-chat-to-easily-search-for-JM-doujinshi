@@ -591,3 +591,22 @@ def test_progress_interval_adaptive():
     # 未知/非正数 → 默认 10s
     assert progress_interval(0) == 10
     assert progress_interval(None) == 10
+
+
+def test_progress_thresholds():
+    """进度阈值断点正确性，保证中途条数严格受控"""
+    from jm_niang import _progress_thresholds, _target_progress_msgs
+    # target=7 → 6 个中途断点（0.143~0.857），加上完成提示共 7 条
+    th = _progress_thresholds(7)
+    assert len(th) == 6
+    assert abs(th[0] - 1 / 7) < 1e-9
+    assert abs(th[-1] - 6 / 7) < 1e-9
+    # target=2 → 只有1个断点(0.5)：起始 + 50% + 完成 = 符合20页目标2条中档
+    assert _progress_thresholds(2) == [0.5]
+    # target=1 或 0 → 无中途断点（只有起始+完成）
+    assert _progress_thresholds(1) == []
+    assert _progress_thresholds(0) == []
+    # 目标条数与总阈值数量一致（目标条数 = 起始1 + 中途 + 完成1）
+    for pages in (20, 40, 100, 3000):
+        t = _target_progress_msgs(pages)
+        assert len(_progress_thresholds(t)) == t - 1

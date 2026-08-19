@@ -672,6 +672,15 @@ def _target_progress_msgs(total_pages):
     return max(PROGRESS_MIN_MSGS, min(TARGET_PROGRESS_MSGS, int(math.ceil(target))))
 
 
+def _progress_thresholds(target_msgs):
+    """返回按目标条数划分的中途进度阈值（0~1 之间的百分比断点）。
+    例 target=4 → [0.25,0.5,0.75]；start=1，到达 100% 由打包分支提示。
+    target<=1 返回空（只有起始 + 完成两条）。"""
+    if not target_msgs or target_msgs <= 1:
+        return []
+    return [i / target_msgs for i in range(1, target_msgs)]
+
+
 def progress_interval(total_pages):
     """根据本子页数反推「下载中」报进度间隔（秒）。
     间隔 = 预估总时长 / 目标条数。小本子目标条数少（20页→2条、40页→3条）总条数克制；
@@ -684,17 +693,20 @@ def progress_interval(total_pages):
 
 
 async def monitor_progress(api, group_id, album_id, total_pages, download_task):
-    """定时汇报下载进度：间隔按本子大小自适应（小本子勤、大本子稀，防刷屏）；
-    下载完成后打包阶段发一次性提示"""
+    """定时汇报下载进度：**按进度百分比阈值触发**（依赖目标条数），无论下载快慢，
+    中途汇报条数都被严格控制在目标条数以内，杜绝卡网时刷屏。
+    达到 100% 进入打包阶段发一次性提示。"""
     task_dir = os.path.join(DOWNLOAD_DIR, str(album_id))
-    interval = progress_interval(total_pages)
-    last_report = 0.0
+    target = _target_progress_msgs(total_pages)
+    # 阈值断点：例如 target=4 → [0.25,0.5,0.75]（发3条中途进度，100%时由打包分支提示）
+    thresholds = _progress_thresholds(target)
+    th_idx = 0
+    reported_any = False
     zip_notified = False
     while not download_task.done():
         done = count_images(task_dir)
         if album_id in ACTIVE_TASKS:
             ACTIVE_TASKS[album_id]['done'] = done
-        now = time.monotonic()
         # 打包阶段：页数下载完成但任务未结束（ZIP 加密压缩需 1-2 分钟），发一次性提示
         if total_pages > 0 and done >= total_pages and not zip_notified:
             zip_notified = True
@@ -705,21 +717,44 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
                 })
             except Exception:
                 pass
+            await asyncio.sleep(3)
             continue
-        if now - last_report >= interval:
-            last_report = now
-            try:
-                if total_pages > 0:
-                    pct = int(done * 100 / total_pages)
+        if total_pages > 0:
+            progress = done / total_pages
+            # 一旦有下载进度就发一条起始进度，保证小本子也有反馈
+            if done > 0 and not reported_any:
+                reported_any = True
+                pct = int(done * 100 / total_pages)
+                try:
                     await api('send_group_msg', {
                         'group_id': group_id,
                         'message': f'⏳ 漫画 {album_id} 下载中… {pct}%（{done}/{total_pages}）'
                     })
-                else:
+                except Exception:
+                    pass
+                while th_idx < len(thresholds) and progress >= thresholds[th_idx]:
+                    th_idx += 1
+            elif thresholds and th_idx < len(thresholds) and progress >= thresholds[th_idx]:
+                pct = int(done * 100 / total_pages)
+                try:
                     await api('send_group_msg', {
                         'group_id': group_id,
-                        'message': f'📥 漫画 {album_id} 下载中… 已下载 {done} 张图（本子较大请耐心等待）'
+                        'message': f'⏳ 漫画 {album_id} 下载中… {pct}%（{done}/{total_pages}）'
                     })
+                except Exception:
+                    pass
+                th_idx += 1
+                if th_idx >= len(thresholds) and not reported_any:
+                    reported_any = True
+        else:
+            # 页数未知：按时间每 10 秒报一次已下载张数
+            try:
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': f'📥 漫画 {album_id} 下载中… 已下载 {done} 张图（本子较大请耐心等待）'
+                })
+                await asyncio.sleep(10)
+                continue
             except Exception:
                 pass
         await asyncio.sleep(3)
