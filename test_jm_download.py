@@ -576,16 +576,18 @@ def test_cancel_download_does_not_rmtree(tmp_path):
 
 
 def test_progress_interval_adaptive():
-    """进度条间隔按本子大小自适应：小本子勤、大本子稀、页数未知用默认"""
-    from jm_niang import progress_interval
-    # 小本子：短间隔（>5s）
+    """进度条间隔按本子大小反推，控制全程总条数：大本子间隔更长、全程约 TARGET_PROGRESS_MSGS 条"""
+    from jm_niang import progress_interval, TARGET_PROGRESS_MSGS, AVG_SECONDS_PER_PAGE, PROGRESS_INTERVAL_MIN
+    # 小本子：受下限约束
     small = progress_interval(100)
-    assert small >= 5 and small <= 60
-    # 大本子：间隔明显大于小本子
-    big = progress_interval(2000)
+    assert small == max(PROGRESS_INTERVAL_MIN, 100 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS)
+    # 大本子：间隔明显大于小本子（全程总条数被控制住）
+    big = progress_interval(3000)
     assert big > small
-    # 封顶 60s
-    assert progress_interval(100000) <= 60
+    assert abs(big - 3000 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS) < 0.01
+    # 核心：无论多大本子，用间隔反推的全程消息数≈TARGET（不会刷屏几十条）
+    huge = progress_interval(30000)
+    assert huge > big
     # 未知/非正数 → 默认 10s
     assert progress_interval(0) == 10
     assert progress_interval(None) == 10
