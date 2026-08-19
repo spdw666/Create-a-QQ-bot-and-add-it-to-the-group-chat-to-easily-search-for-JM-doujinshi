@@ -576,18 +576,21 @@ def test_cancel_download_does_not_rmtree(tmp_path):
 
 
 def test_progress_interval_adaptive():
-    """进度条间隔按本子大小反推，控制全程总条数：大本子间隔更长、全程约 TARGET_PROGRESS_MSGS 条"""
+    """进度条间隔：大本子全程约 TARGET_PROGRESS_MSGS 条；小本子用短间隔（下限5s）正常报进度"""
     from jm_niang import progress_interval, TARGET_PROGRESS_MSGS, AVG_SECONDS_PER_PAGE, PROGRESS_INTERVAL_MIN
-    # 小本子：受下限约束
-    small = progress_interval(100)
-    assert small == max(PROGRESS_INTERVAL_MIN, 100 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS)
-    # 大本子：间隔明显大于小本子（全程总条数被控制住）
+    # 几十页小本子：短间隔（下限5s），而非一条不发
+    small = progress_interval(20)
+    assert small == max(PROGRESS_INTERVAL_MIN, 20 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS)
+    assert small <= 5  # 20页→3s被下限抬到5s
+    # 中等本子：间隔 = 总时长/目标条数
+    mid = progress_interval(200)
+    assert abs(mid - 200 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS) < 0.01
+    # 大本子：间隔明显更大，全程总条数被控制约7条
     big = progress_interval(3000)
-    assert big > small
+    assert big > mid
     assert abs(big - 3000 * AVG_SECONDS_PER_PAGE / TARGET_PROGRESS_MSGS) < 0.01
-    # 核心：无论多大本子，用间隔反推的全程消息数≈TARGET（不会刷屏几十条）
-    huge = progress_interval(30000)
-    assert huge > big
+    # 超大小本子间隔继续拉长
+    assert progress_interval(30000) > big
     # 未知/非正数 → 默认 10s
     assert progress_interval(0) == 10
     assert progress_interval(None) == 10
