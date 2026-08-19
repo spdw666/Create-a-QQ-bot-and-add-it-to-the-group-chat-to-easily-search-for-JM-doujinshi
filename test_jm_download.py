@@ -464,3 +464,46 @@ def test_handle_message_branches():
     from jm_niang import NO_AT_BUTTONS
     assert '随机' in NO_AT_BUTTONS and '今日属性' in NO_AT_BUTTONS and '日榜' in NO_AT_BUTTONS
     assert '安装包' in NO_AT_BUTTONS and '任务' in NO_AT_BUTTONS and '自查' in NO_AT_BUTTONS
+
+
+def test_cancelable_downloader_before_image():
+    """取消机制：before_image 通过 image.from_photo.from_album.album_id 命中取消标记"""
+    import jm_download
+    from jm_download import CancelableDownloader, DownloadCancelledError, CANCELLED_ALBUMS
+
+    class FakeAlbum:
+        album_id = '542920'
+
+    class FakePhoto:
+        from_album = FakeAlbum()
+
+    class FakeImage:
+        from_photo = FakePhoto()
+
+    # 清空取消标记
+    CANCELLED_ALBUMS.clear()
+
+    # 用 object.__new__ 绕过 JmDownloader.__init__（不需要真实 option），只测 before_image 逻辑
+    downloader = object.__new__(CancelableDownloader)
+
+    # 无取消标记：不抛异常，正常调 super().before_image
+    img = FakeImage()
+    called = {}
+    origin_before = jm_download.JmDownloader.before_image
+    jm_download.JmDownloader.before_image = lambda self, i, p: called.setdefault('hit', True)
+    try:
+        downloader.before_image(img, '/tmp/x.webp')  # 不应抛异常
+    finally:
+        jm_download.JmDownloader.before_image = origin_before
+    assert called.get('hit') is True  # 走到了 super().before_image
+
+    # 加取消标记：应抛 DownloadCancelledError
+    CANCELLED_ALBUMS.add('542920')
+    try:
+        downloader.before_image(img, '/tmp/x.webp')
+        raised = False
+    except DownloadCancelledError:
+        raised = True
+    assert raised is True
+
+    CANCELLED_ALBUMS.clear()

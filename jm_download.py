@@ -121,8 +121,12 @@ class CancelableDownloader(JmDownloader):
     """支持取消的下载器：每张图下载前检查取消标记，命中则快速失败中止下载"""
 
     def before_image(self, image, img_save_path):
+        # jmcomic 的 JmImageDetail 没有 from_album 属性（只有 from_photo→章节），
+        # 正确路径是 image.from_photo.from_album.album_id（图片→章节→整本）。
+        # 之前误用 image.from_album 会抛 AttributeError 被吞掉，导致取消永不生效。
+        album_id = None
         try:
-            album_id = image.from_album.album_id
+            album_id = image.from_photo.from_album.album_id
         except Exception:
             album_id = None
         if album_id is not None and str(album_id) in CANCELLED_ALBUMS:
