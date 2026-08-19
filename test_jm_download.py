@@ -573,3 +573,19 @@ def test_cancel_download_does_not_rmtree(tmp_path):
     assert os.path.exists(probe)
 
     CANCELLED_ALBUMS.clear()
+
+
+def test_progress_interval_adaptive():
+    """进度条间隔按本子大小自适应：小本子勤、大本子稀、页数未知用默认"""
+    from jm_niang import progress_interval
+    # 小本子：短间隔（>5s）
+    small = progress_interval(100)
+    assert small >= 5 and small <= 60
+    # 大本子：间隔明显大于小本子
+    big = progress_interval(2000)
+    assert big > small
+    # 封顶 60s
+    assert progress_interval(100000) <= 60
+    # 未知/非正数 → 默认 10s
+    assert progress_interval(0) == 10
+    assert progress_interval(None) == 10

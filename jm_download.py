@@ -224,9 +224,10 @@ def get_album_page_count(album_id):
     return info['page_count'] if info else 0
 
 
-def _pick_smallest_chapters(items, n=3):
+def _pick_smallest_chapters(items, n=3, client=None):
     """从候选 (id, title) 里随机挑 n 本，并发拉详情后选章节数最少的一本。
-    每本详情最多等 8 秒（禁漫 API 偶发挂起时不拖垮整个命令）。
+    复用外部 client（传入）避免每次重复初始化 jmcomic 配置——这是提速关键。
+    单本详情最多等 5 秒（禁漫 API 偶发挂起时不拖垮整个命令）。
     返回 dict{id,title,author,chapter_count} 或 None（全部失败）"""
     import random
     from concurrent.futures import ThreadPoolExecutor
@@ -235,9 +236,12 @@ def _pick_smallest_chapters(items, n=3):
 
     def _fetch(aid, title):
         try:
-            opt = _apply_proxy(JmOption.default())
-            c = opt.new_jm_client()
-            detail = c.get_album_detail(aid)
+            if client is not None:
+                detail = client.get_album_detail(aid)
+            else:
+                opt = _apply_proxy(JmOption.default())
+                c = opt.new_jm_client()
+                detail = c.get_album_detail(aid)
             return (len([p for p in detail]), str(detail.id), detail.title,
                     getattr(detail, 'author', '') or '')
         except Exception:
@@ -248,7 +252,7 @@ def _pick_smallest_chapters(items, n=3):
         fetched = []
         for fut in futures:
             try:
-                r = fut.result(timeout=8)  # 单本详情上限 8 秒，超时放弃该本
+                r = fut.result(timeout=5)  # 单本详情上限 5 秒，超时放弃该本
                 if r:
                     fetched.append(r)
             except Exception:
@@ -278,8 +282,8 @@ def get_random_hot_album():
         items = list(page.iter_id_title())
         if not items:
             return None
-        # 从前 30 本里挑章节数最少的（避免总是同一本）
-        return _pick_smallest_chapters(items[:30])
+        # 从前 30 本里挑章节数最少的（避免总是同一本），复用上面已创建的 client 提速
+        return _pick_smallest_chapters(items[:30], client=client)
     except Exception:
         return None
 
@@ -923,7 +927,7 @@ def get_random_tag_album():
         except Exception:
             continue  # 该标签搜索失败，换下一个标签
         if items:
-            pick = _pick_smallest_chapters(items[:24])
+            pick = _pick_smallest_chapters(items[:24], client=client)  # 复用 client 提速
             if pick:
                 pick['tag'] = tag
                 return pick

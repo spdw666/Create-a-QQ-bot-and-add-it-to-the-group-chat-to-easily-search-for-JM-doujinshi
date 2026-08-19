@@ -653,9 +653,26 @@ def render_task_status():
     return '\n'.join(lines)
 
 
+# 进度间隔范围（秒）：小本子报勤一点，大本子报稀一点，避免刷屏
+PROGRESS_INTERVAL_MIN = 5   # 小本子（很快下完）最短间隔
+PROGRESS_INTERVAL_MAX = 60  # 大本子（几千页）最长间隔
+# 每多一页，间隔线性增加量（100页→~8s，500页→~20s，1500页→~50s，封顶60s）
+PROGRESS_INTERVAL_PER_PAGE = 0.035
+
+
+def progress_interval(total_pages):
+    """根据本子页数动态计算「下载中」报进度间隔（秒）。页数未知时用默认 10s。"""
+    if not total_pages or total_pages <= 0:
+        return 10
+    interval = PROGRESS_INTERVAL_MIN + total_pages * PROGRESS_INTERVAL_PER_PAGE
+    return max(PROGRESS_INTERVAL_MIN, min(PROGRESS_INTERVAL_MAX, interval))
+
+
 async def monitor_progress(api, group_id, album_id, total_pages, download_task):
-    """定时汇报下载进度：每 10 秒输出一次当前进度（用户要求）；下载完成后打包阶段发一次性提示"""
+    """定时汇报下载进度：间隔按本子大小自适应（小本子勤、大本子稀，防刷屏）；
+    下载完成后打包阶段发一次性提示"""
     task_dir = os.path.join(DOWNLOAD_DIR, str(album_id))
+    interval = progress_interval(total_pages)
     last_report = 0.0
     zip_notified = False
     while not download_task.done():
@@ -674,7 +691,7 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
             except Exception:
                 pass
             continue
-        if now - last_report >= 10:
+        if now - last_report >= interval:
             last_report = now
             try:
                 if total_pages > 0:
@@ -786,8 +803,10 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         # 重试前先查群文件列表，已存在则视为成功；查列表 API 异常时不再盲目重试（防重复文件）
         result = None
         last_err = ''
+        # 上传进度间隔按文件大小自适应：小文件勤、大文件稀，避免刷屏
+        upload_interval = max(10, min(30, int(size / (10 * 1024 * 1024))))  # 10MB→10s，300MB→30s，封顶30s
         for attempt in range(1, 3):
-            # 上传中每 10 秒报一次进度（用户要求：避免以为卡住）
+            # 上传中按 upload_interval 报一次进度（避免以为卡住，大文件报稀一些）
             upload_task = asyncio.create_task(api('upload_group_file', {
                 'group_id': group_id,
                 'file': zip_path,
@@ -795,10 +814,10 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             }, timeout=1200))
             waited = 0
             while not upload_task.done():
-                await asyncio.sleep(10)
+                await asyncio.sleep(upload_interval)
                 if upload_task.done():
                     break  # sleep 期间上传已完成（文件已出），不再补发进度
-                waited += 10
+                waited += upload_interval
                 try:
                     await api('send_group_msg', {
                         'group_id': group_id,
