@@ -932,14 +932,12 @@ def get_random_tag_album():
 
 def cancel_download(album_id, work_dir=None):
     """
-    标记取消下载并删除已下载的缓存目录。
-    下载线程会通过 CancelableDownloader 在数秒内停止。
+    标记取消下载。不立即删除目录（避免与正在进行的 ZIP 打包读文件竞态，
+    导致 FileNotFoundError）；下载线程会在数秒内通过断出检查停止，
+    由 handle_jm_request 的取消分支或 cleanup_cancelled 统一清理。
     """
     album_id = str(album_id)
     CANCELLED_ALBUMS.add(album_id)
-    task_dir = _task_dir(album_id, work_dir)
-    if os.path.isdir(task_dir):
-        shutil.rmtree(task_dir, ignore_errors=True)  # 文件占用时删不干净，下载停止后会再清一次
     return True
 
 

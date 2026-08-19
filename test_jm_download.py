@@ -546,3 +546,30 @@ def test_find_cached_zip_removes_corrupt(tmp_path):
     path2, title2 = find_cached_zip('999999', str(tmp_path))
     assert path2 is None and title2 is None
     assert not os.path.exists(bad)
+# -*- coding: utf-8 -*-
+"""验证取消修复：cancel_download 不再立即删除目录（避免与打包竞态）"""
+import os
+import jm_download
+from jm_download import cancel_download, CANCELLED_ALBUMS
+
+
+def test_cancel_download_does_not_rmtree(tmp_path):
+    """取消只标记，不立即删目录（打包读文件时不被打断）"""
+    album = '777777'
+    task_dir = jm_download._task_dir(album, str(tmp_path))
+    os.makedirs(task_dir, exist_ok=True)
+    probe = os.path.join(task_dir, '00001.webp')
+    with open(probe, 'w', encoding='utf-8') as f:
+        f.write('x')
+
+    CANCELLED_ALBUMS.clear()
+    ret = cancel_download(album, str(tmp_path))
+
+    assert ret is True
+    # 标记已加
+    assert album in CANCELLED_ALBUMS
+    # 目录和文件仍在（不立即删除，交给取消分支清理）
+    assert os.path.isdir(task_dir)
+    assert os.path.exists(probe)
+
+    CANCELLED_ALBUMS.clear()
