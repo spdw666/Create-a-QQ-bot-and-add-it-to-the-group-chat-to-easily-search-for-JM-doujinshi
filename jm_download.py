@@ -806,7 +806,7 @@ def _ocr_text(img_bytes):
 # 视觉大模型配置（内页图识别：画面描述 → 标签搜索；SiliconFlow OpenAI 兼容 API）
 LLM_API_KEY = os.environ.get('JM_LLM_KEY', '').strip()
 LLM_API_URL = 'https://api.siliconflow.cn/v1/chat/completions'
-LLM_MODEL = 'Qwen/Qwen3-VL-8B-Instruct'
+LLM_MODEL = os.environ.get('JM_LLM_MODEL', 'Qwen/Qwen3-VL-8B-Instruct')  # 付费更强模型可配 JM_LLM_MODEL（如 Qwen/Qwen3-VL-30B-A3B-Instruct）
 
 # 视觉大模型的候选标签（与今日属性标签池一致，便于搜禁漫 tag）
 LLM_TAGS = ('NTR、纯爱、人妻、女仆、百合、触手、后宫、制服、催眠、调教、姐弟、母女、痴女、'

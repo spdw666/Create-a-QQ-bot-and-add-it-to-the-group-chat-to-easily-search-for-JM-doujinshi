@@ -333,4 +333,4 @@ start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
 
 ## License
 
-[MIT](LICENSE) © 2026 spdw666
+[MIT](LICENSE) © 2026 spdw666\n| JM_LLM_MODEL | ❌ | 识图视觉模型（可选；默认 Qwen/Qwen3-VL-8B-Instruct 免费档；付费可配 Qwen/Qwen3-VL-30B-A3B-Instruct 更快更准）。Optional vision model for image search (default free Qwen/Qwen3-VL-8B-Instruct; paid Qwen/Qwen3-VL-30B-A3B-Instruct is faster & better). |
