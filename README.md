@@ -55,7 +55,7 @@
 | `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
 | `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
 | `@bot 日榜/周榜/月榜` | 查看排行榜前 5（支持翻页） | Daily / weekly / monthly ranking top 5 (paginated) |
-| `@bot <图片>` | 以图搜本：OCR 文字优先 → SauceNAO / E-Hentai / iQDB 并行识图 → AI 视觉兜底，反查出处并尝试在禁漫匹配同款 | Reverse image search: OCR text first → SauceNAO / E-Hentai / iQDB in parallel → vision AI fallback |
+| `@bot <图片>` | 以图搜本：OCR 文字优先 → SauceNAO / E-Hentai / iQDB 并行识图 → Qwen3-VL 结构化提取标题/作者/标签正向搜禁漫兜底；同图结果缓存秒回 | Reverse image search: OCR text first → SauceNAO / E-Hentai / iQDB in parallel → Qwen3-VL extracts title/author/tags for forward search on JM; identical-image results are cached for instant replies |
 | `@bot 识图` | 进入识图等待窗口：20 秒内直接发图即可搜（无需再@） | Enter image-search mode: send the image within 20 s (no re-mention needed) |
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本（优先章节少的） | Random pick from the hottest albums of the last 30 days (prefers fewer chapters) |
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本（优先章节少的） | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album (prefers fewer chapters) |
@@ -225,7 +225,7 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_PUBLIC_IP` | ✅ | 服务器公网 IP/域名，用于生成浏览器下载链接。Public IP/host used to build download links. |
 | `JM_PROXY` | ❌ | 可选 HTTP 代理（如 `http://127.0.0.1:7890`；留空 = 直连）。Optional HTTP proxy (empty = direct). |
 | `JM_SAUCENAO_KEY` | ❌ | SauceNAO 识图 API key（免费注册 https://saucenao.com/user.php；未填时以图搜本仅用 iQDB 兜底）。Optional SauceNAO API key for reverse image search (free; without it only iQDB is used). |
-| `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped). |
+| `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层；已填时还可结构化提取标题/作者/标签正向搜禁漫）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped; with it the bot can also extract title/author/tags for forward search on JM). |
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 | `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
 

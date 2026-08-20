@@ -762,9 +762,10 @@ def _yandex_search(img_bytes):
         return []
 
 
-# OCR 忽略词（封面常见无关文字）
+# OCR 忽略词（封面常见无关文字/水印；精确匹配，保守不过滤）
 OCR_IGNORE = {'r18', 'r-18', '18禁', 'for adults', 'only', 'adults', '無修正', '无修正',
-              'dl版', 'dl', 'comic', 'manga', 'sample'}
+              'dl版', 'dl', 'comic', 'manga', 'sample',
+              'chubold.com', 'jnp comiomic', 'jmcomic', '18comic', '18comic.vip', 'www.18comic.vip', '禁漫天堂'}
 
 _OCR_ENGINE = None
 
