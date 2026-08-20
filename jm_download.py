@@ -503,9 +503,10 @@ GOOGLE_IGNORE = {'manga', 'anime', 'comic', 'hentai', 'doujinshi', '同人誌', 
                  '漫画', 'アニメ', 'illustration', 'drawing', 'pixiv'}
 
 
-def _post_stealth(url, files=None, data=None, headers=None, timeout=60):
+def _post_stealth(url, files=None, data=None, headers=None, timeout=60, allow_redirects=True):
     """高伪装 POST 回退（curl_cffi 浏览器 TLS 指纹）：requests 被反爬拦截时自动切换。
-    兼容 curl_cffi 新旧版（旧版 files=，新版 CurlMime multipart）。返回 Response 或 None"""
+    兼容 curl_cffi 新旧版（旧版 files=，新版 CurlMime multipart）。返回 Response 或 None
+    allow_redirects=False 用于需要捕获 302 Location 的识图站（如 ascii2d）"""
     try:
         from curl_cffi.requests import Session
         session = Session(impersonate='chrome')
@@ -514,6 +515,8 @@ def _post_stealth(url, files=None, data=None, headers=None, timeout=60):
             kwargs['data'] = data
         if headers:
             kwargs['headers'] = headers
+        if not allow_redirects:
+            kwargs['allow_redirects'] = False
         if files:
             try:
                 return session.post(url, files=files, **kwargs)
@@ -662,6 +665,98 @@ def _iqdb_search(img_bytes):
         return []
 
 
+def _ascii2d_search(img_bytes):
+    """ascii2d 识图（无需 key，覆盖 Pixiv/推特/Danbooru 等日英标题）。
+    上传 multipart → 302 拿结果页 → 特征检索页解析。返回 [(title, url)]，失败返回 []"""
+    files = {'file': ('img.jpg', img_bytes, 'image/jpeg')}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+               'Referer': 'https://ascii2d.net/'}
+    try:
+        import requests
+        r = requests.post('https://ascii2d.net/search/multi', files=files,
+                          headers=headers, timeout=60, allow_redirects=False)
+    except Exception:
+        r = _post_stealth('https://ascii2d.net/search/multi', files=files,
+                          headers=headers, timeout=60, allow_redirects=False)
+    if r is None:
+        return []
+    try:
+        # multipart 上传成功返回 302，Location 指向结果页（色合检索 /search/color/<hash>）
+        location = r.headers.get('location') or r.headers.get('Location') or ''
+        if not location:
+            return []
+        if not location.startswith('http'):
+            location = 'https://ascii2d.net' + location
+        # 切到特征检索（比色合检索更准）：/search/color/xxx → /search/xxx
+        if '/color/' in location:
+            location = location.replace('/color/', '/')
+        page = requests.get(location, headers=headers, timeout=60)
+        html = page.text
+        out = []
+        # 结果块：<div class="row item">…</div>，标题在 .detail-link 的 <a>，作者/来源在 .detail-sub
+        for m in re.finditer(r'<div class="row item">(.*?)</div>\s*</div>', html, re.S):
+            block = m.group(1)
+            a = re.search(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', block, re.S)
+            if not a:
+                continue
+            url, title = a.group(1), re.sub(r'<[^>]+>', ' ', a.group(2))
+            title = re.sub(r'\s+', ' ', title).strip()
+            if not title or 'ascii2d' in url:
+                continue
+            # 作者/来源补充进标题（禁漫搜索更易命中）：detail-sub 的第一行文本
+            sub = re.search(r'detail-sub[^>]*>(.*?)</div>', block, re.S)
+            if sub:
+                sub_text = re.sub(r'<[^>]+>', ' ', sub.group(1))
+                sub_text = re.sub(r'\s+', ' ', sub_text).strip()
+                if sub_text and sub_text.lower() not in title.lower():
+                    title = f'{title} {sub_text}'
+            out.append((title[:150], url))
+            if len(out) >= 3:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _yandex_search(img_bytes):
+    """Yandex 以图搜图（cbird 接口 + curl_cffi chrome 指纹，反爬较强失败时静默）。
+    返回 [(title, url)]，失败返回 []"""
+    try:
+        from curl_cffi.requests import Session
+        session = Session(impersonate='chrome')
+        session.get('https://yandex.com/images/', timeout=60)
+        # 新版 curl_cffi 废除了 files=，用 CurlMime 上传（兼容 requests 风格文件）
+        try:
+            r = session.post(
+                'https://yandex.com/images-apphost/image-details?cbird=111',
+                files={'upfile': ('img.jpg', img_bytes, 'image/jpeg')},
+                headers={'Origin': 'https://yandex.com',
+                         'Referer': 'https://yandex.com/images/'},
+                timeout=60)
+        except NotImplementedError:
+            from curl_cffi.curl import CurlMime
+            mime = CurlMime()
+            mime.addpart(name='upfile', filename='img.jpg', data=img_bytes, content_type='image/jpeg')
+            r = session.post(
+                'https://yandex.com/images-apphost/image-details?cbird=111',
+                multipart=mime,
+                headers={'Origin': 'https://yandex.com',
+                         'Referer': 'https://yandex.com/images/'},
+                timeout=60)
+        j = r.json()
+        out = []
+        for site in (j.get('sites') or [])[:5]:
+            title = (site.get('title') or '').strip()
+            url = (site.get('url') or '').strip()
+            if title and url:
+                out.append((title[:150], url))
+            if len(out) >= 3:
+                break
+        return out
+    except Exception:
+        return []
+
+
 # OCR 忽略词（封面常见无关文字）
 OCR_IGNORE = {'r18', 'r-18', '18禁', 'for adults', 'only', 'adults', '無修正', '无修正',
               'dl版', 'dl', 'comic', 'manga', 'sample'}
@@ -771,17 +866,21 @@ def search_by_image(img_bytes):
                 'matches': matches[:5],
                 'ocr_texts': ocr_texts[:6],
             }
-    # 2. 视觉识图（SauceNAO + Google + E-Hentai + iQDB 四路并发，总耗时=最慢一路，60s 总超时内全部出结果）
+    # 2. 视觉识图（SauceNAO + Google + E-Hentai + iQDB + ascii2d + Yandex 六路并发，总耗时=最慢一路，60s 总超时内全部出结果）
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         f_sauce = pool.submit(_sauce_search, img_bytes)
         f_google = pool.submit(_google_web_search, img_bytes)
         f_eh = pool.submit(_ehentai_search, img_bytes)
         f_iqdb = pool.submit(_iqdb_search, img_bytes)
+        f_ascii2d = pool.submit(_ascii2d_search, img_bytes)
+        f_yandex = pool.submit(_yandex_search, img_bytes)
         sauce_results = f_sauce.result()
         google_results = f_google.result()
         eh_results = f_eh.result()
         iqdb_results = f_iqdb.result()
+        ascii2d_results = f_ascii2d.result()
+        yandex_results = f_yandex.result()
     candidates = []  # (kws, url) 展示候选
     match_candidates = []  # 参与禁漫标题匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
     author_candidates = []  # 参与禁漫作者匹配的候选（SauceNAO 作者字段）
@@ -809,6 +908,16 @@ def search_by_image(img_bytes):
         if len(candidates) >= 5:
             break
     for title, url in iqdb_results:
+        candidates.append(([title], url))
+        match_candidates.append([title])
+        if len(candidates) >= 5:
+            break
+    for title, url in ascii2d_results:
+        candidates.append(([title], url))
+        match_candidates.append([title])
+        if len(candidates) >= 5:
+            break
+    for title, url in yandex_results:
         candidates.append(([title], url))
         match_candidates.append([title])
         if len(candidates) >= 5:

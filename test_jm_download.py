@@ -610,3 +610,84 @@ def test_progress_thresholds():
     for pages in (20, 40, 100, 3000):
         t = _target_progress_msgs(pages)
         assert len(_progress_thresholds(t)) == t - 1
+
+
+def test_ascii2d_search_parses(monkeypatch):
+    """ascii2d 解析：302 拿 location → 特征页解析标题/作者"""
+    import requests as real_requests
+    import jm_download as m
+    from jm_download import _ascii2d_search
+
+    class FakeUploadResp:
+        headers = {'location': 'https://ascii2d.net/search/color/abc123'}
+
+    class FakePageResp:
+        text = (
+            '<div class="row item">'
+            '<a href="https://pixiv.net/artworks/12345"><span>俺の妹がこんなに可愛いわけがない</span></a>'
+            '<div class="detail-sub">author:エロ漫画屋</div>'
+            '</div></div>'
+        )
+
+    def fake_post(url, files=None, headers=None, timeout=None, allow_redirects=None):
+        if url.endswith('/search/multi'):
+            return FakeUploadResp()
+        return FakePageResp()
+    monkeypatch.setattr(real_requests, 'post', fake_post)
+    def fake_get(url, headers=None, timeout=None):
+        return FakePageResp()
+    monkeypatch.setattr(real_requests, 'get', fake_get)
+    out = _ascii2d_search(b'fake-bytes')
+    assert out, '应有解析结果'
+    title, url = out[0]
+    assert '俺の妹' in title, f'标题解析错误: {title!r}'
+
+
+def test_ascii2d_search_failure_returns_empty(monkeypatch):
+    """ascii2d 请求失败返回 []，不抛异常（识图兜底不应中断）"""
+    import requests as real_requests
+    import jm_download as m
+    from jm_download import _ascii2d_search
+    def boom(url, files=None, headers=None, timeout=None, allow_redirects=None):
+        raise RuntimeError('net down')
+    monkeypatch.setattr(real_requests, 'post', boom)
+    monkeypatch.setattr(m, '_post_stealth', lambda *a, **k: None)
+    assert _ascii2d_search(b'x') == []
+
+
+def test_yandex_search_parses(monkeypatch):
+    """Yandex cbird 接口：JSON 结果解析"""
+    import curl_cffi.requests as cc_requests
+    from jm_download import _yandex_search
+
+    class FakeSessionResp:
+        def json(self):
+            return {'sites': [
+                {'title': 'エロ漫画', 'url': 'https://example.com/1'},
+                {'title': 'NSFW', 'url': 'https://example.com/2'},
+                {'no_url': 1},
+            ]}
+    class FakeSession:
+        def __init__(self, *a, **k):
+            pass
+        def get(self, *a, **k):
+            return FakeSessionResp()
+        def post(self, *a, **k):
+            return FakeSessionResp()
+    monkeypatch.setattr(cc_requests, 'Session', FakeSession)  # 接受 impersonate kwarg
+    out = _yandex_search(b'x')
+    assert out and out[0][0] == 'エロ漫画'
+    assert len(out) == 2  # 无 title 或无 url 的条目被跳过
+
+
+def test_yandex_search_failure_returns_empty(monkeypatch):
+    """Yandex 失败返回 []，不抛异常"""
+    import curl_cffi.requests as cc_requests
+    from jm_download import _yandex_search
+    class BoomSession:
+        def get(self, *a, **k):
+            raise RuntimeError('blocked')
+        def post(self, *a, **k):
+            raise RuntimeError('blocked')
+    monkeypatch.setattr(cc_requests, 'Session', BoomSession)
+    assert _yandex_search(b'x') == []
