@@ -5,6 +5,7 @@ JM娘 核心下载模块
 用法（命令行测试）: python jm_download.py <漫画ID>
 """
 import glob
+import hashlib
 import os
 import re
 import shutil
@@ -54,6 +55,10 @@ PHOTO_CONCURRENCY = 6    # 单本内章节并发数（默认32；长连载本子
 
 # 已取消下载的 album_id 集合（进程内全局；set 操作线程安全）
 CANCELLED_ALBUMS = set()
+# 以图搜本：图片 sha256 → 结果缓存（同图秒回，防重复请求/不对重搜重复调用）
+_IMG_RESULT_CACHE = {}
+# 新识图源（ascii2d/Yandex）默认关闭：服务器 DC IP 被反爬；配好 JM_PROXY/住宅代理后置 1 启用
+USE_NEW_IMAGE_SOURCES = bool(os.environ.get('JM_NEW_IMAGE_SOURCES', '').strip())
 
 # ---------- ZIP 加密配置 ----------
 # 开启后打包的ZIP带密码（AES-128），防止QQ内容扫描导致「文件瞬间失效」/上传被风控。
@@ -840,7 +845,80 @@ def _llm_describe(img_bytes):
         return []
 
 
+_LLM_JSON_RE = re.compile(r'\{.*\}', re.S)
+
+
+def _llm_extract_fields(img_bytes):
+    """LLM 结构化提取：标题候选/作者/标签/画面文字 → dict；无 key 或失败返回 {}"""
+    if not LLM_API_KEY:
+        return {}
+    import base64
+    import json
+    try:
+        import requests
+        b64 = base64.b64encode(img_bytes).decode()
+        prompt = ('这是禁漫天堂的漫画图片（封面或内页）。请识别图片并只输出一个 JSON 对象（不要输出任何其他文字）：\n'
+                  '{\"title_candidates\": [\"作品标题候选，1-3个，优先日文原名/中文名，必须来自图片中的书名文字\"], '
+                  '\"author_candidates\": [\"作者名，0-2个，仅当图片中出现时给出\"], '
+                  '\"tags\": [\"题材标签，0-5个，如 NTR、纯爱、巨乳、校园\"], '
+                  '\"text\": \"图片中所有可读文字，原样逗号分隔\"}')
+        r = requests.post(LLM_API_URL,
+                          headers={'Authorization': f'Bearer {LLM_API_KEY}',
+                                   'Content-Type': 'application/json'},
+                          json={'model': LLM_MODEL,
+                                'messages': [{'role': 'user', 'content': [
+                                    {'type': 'image_url',
+                                     'image_url': {'url': f'data:image/jpeg;base64,{b64}'}},
+                                    {'type': 'text', 'text': prompt},
+                                ]}],
+                                'max_tokens': 600},
+                          timeout=60)
+        j = r.json()
+        text = j.get('choices', [{}])[0].get('message', {}).get('content', '') or ''
+        m = _LLM_JSON_RE.search(text)
+        if not m:
+            return {}
+        data = json.loads(m.group(0))
+        fields = {}
+        for k in ('title_candidates', 'author_candidates', 'tags'):
+            v = data.get(k) or []
+            fields[k] = [str(x).strip() for x in v if str(x).strip()]
+        fields['text'] = str(data.get('text', ''))[:200]
+        return fields
+    except Exception:
+        return {}
+
+
+def _llm_search_plan(fields):
+    """LLM 字段 → 有序搜索计划（标题优先、作者次之、标签兜底），上限 5 条"""
+    plan = []
+    for t in (fields.get('title_candidates') or [])[:3]:
+        plan.append(('title', t))
+    for a in (fields.get('author_candidates') or [])[:2]:
+        plan.append(('author', a))
+    for g in (fields.get('tags') or [])[:2]:
+        plan.append(('tag', g))
+    return plan[:5]
+
+
 def search_by_image(img_bytes):
+    """以图搜本（缓存版）：同一张图秒回缓存结果；实现见 _search_by_image_impl"""
+    h = hashlib.sha256(img_bytes).hexdigest()
+    cached = _IMG_RESULT_CACHE.get(h)
+    if cached is not None:
+        res = dict(cached)
+        res['cached'] = True
+        return res
+    res = _search_by_image_impl(img_bytes)
+    if res is not None:
+        _IMG_RESULT_CACHE[h] = res
+        if len(_IMG_RESULT_CACHE) > 300:
+            for k in list(_IMG_RESULT_CACHE)[:100]:
+                _IMG_RESULT_CACHE.pop(k, None)
+    return res
+
+
+def _search_by_image_impl(img_bytes):
     """
     以图搜本：SauceNAO（需 JM_SAUCENAO_KEY）+ iqdb 兜底识图，用识图标题/作者去禁漫搜索匹配。
 
@@ -873,14 +951,16 @@ def search_by_image(img_bytes):
         f_google = pool.submit(_google_web_search, img_bytes)
         f_eh = pool.submit(_ehentai_search, img_bytes)
         f_iqdb = pool.submit(_iqdb_search, img_bytes)
-        f_ascii2d = pool.submit(_ascii2d_search, img_bytes)
-        f_yandex = pool.submit(_yandex_search, img_bytes)
+        f_ascii2d = pool.submit(_ascii2d_search, img_bytes) if USE_NEW_IMAGE_SOURCES else None
+        f_yandex = pool.submit(_yandex_search, img_bytes) if USE_NEW_IMAGE_SOURCES else None
+        f_llm = pool.submit(_llm_extract_fields, img_bytes)  # LLM 结构化提取与引擎并行
         sauce_results = f_sauce.result()
         google_results = f_google.result()
         eh_results = f_eh.result()
         iqdb_results = f_iqdb.result()
-        ascii2d_results = f_ascii2d.result()
-        yandex_results = f_yandex.result()
+        ascii2d_results = f_ascii2d.result() if f_ascii2d else []
+        yandex_results = f_yandex.result() if f_yandex else []
+        llm_fields = f_llm.result() or {}
     candidates = []  # (kws, url) 展示候选
     match_candidates = []  # 参与禁漫标题匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
     author_candidates = []  # 参与禁漫作者匹配的候选（SauceNAO 作者字段）
@@ -923,20 +1003,23 @@ def search_by_image(img_bytes):
         if len(candidates) >= 5:
             break
     if not candidates:
-        # 3. 视觉大模型兜底：内页图 OCR/视觉识图都失败时，AI 描述画面 → 标签搜索
-        llm_words = _llm_describe(img_bytes)
-        matches, seen = [], set()
-        for kw in llm_words[:6]:
-            for r in (search_album(kw, max_count=3) or []):
-                if r['id'] not in seen:
-                    seen.add(r['id'])
-                    matches.append(r)
+        # 3. 视觉大模型结构化兜底：引擎全灭时，用 LLM 提取的标题/作者/标签正向搜索禁漫
+        for kind, kw in _llm_search_plan(llm_fields):
+            try:
+                fn = {'title': search_album, 'author': search_author_album, 'tag': search_tag_album}[kind]
+                for r in (fn(kw, max_count=3) or []):
+                    if r['id'] not in seen:
+                        seen.add(r['id'])
+                        matches.append(r)
+            except Exception:
+                continue
             if len(matches) >= 5:
                 break
-        if llm_words:
+        llm_words = (llm_fields.get('title_candidates') or []) + (llm_fields.get('tags') or [])
+        if llm_fields:
             return {
-                'source_title': llm_words[0],
-                'source_author': '',
+                'source_title': (llm_fields.get('title_candidates') or llm_fields.get('tags') or [''])[0],
+                'source_author': (llm_fields.get('author_candidates') or [''])[0],
                 'source_url': '',
                 'matches': matches[:5],
                 'ocr_texts': ocr_texts[:6],
