@@ -10,6 +10,9 @@
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
 [![jmcomic](https://img.shields.io/badge/jmcomic-2.7.4-ff69b4?style=flat-square)](https://github.com/tonquer/jmcomic)
 [![OneBot](https://img.shields.io/badge/Protocol-OneBot%20v11-7d3cff?style=flat-square)](https://onebot.dev/)
+[![Stars](https://img.shields.io/github/stars/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi?style=flat-square&logo=github&logoColor=white)](https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi)
+[![Last commit](https://img.shields.io/github/last-commit/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi?style=flat-square&logo=git&logoColor=white)](https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi)
+[![Tests](https://img.shields.io/badge/tests-32%20passed-brightgreen?style=flat-square)](test_jm_download.py)
 
 </div>
 
@@ -36,6 +39,7 @@
 - [排障 Troubleshooting](#排障-troubleshooting)
 - [常见问题 FAQ](#常见问题-faq)
 - [项目结构 Project layout](#项目结构-project-layout)
+- [更新日志 Changelog](#更新日志-changelog)
 - [License](#license)
 
 ## 简介 Introduction
@@ -92,6 +96,14 @@
 > ✍️ 作者：八可可 Barcoco  章节：1章
 > 🔢 ID：1459505
 
+以图搜本（发一张图 → OCR / 视觉模型识别 → 反查禁漫）：
+
+> 🧑 [发送封面图片]
+> 🤖 🔍 以图搜本：OCR 识别封面文字「楓と鈴」→ 禁漫匹配：
+> 1. 《[きょくちょ] 楓と鈴 (全) [中國翻譯] [無修正] [DL版]》 章节：1章
+>    🔢 ID：1235379
+> 💡 没搜对？发「不对」重新搜
+
 ## 亮点 Highlights
 
 - **智能中日文搜索 Smart CJK search** —— 简体输入自动匹配繁体 / 日文汉字 / 假名标题，四层降级：
@@ -104,6 +116,8 @@
 
 - **搜索结果翻页/跳页 Pagination** —— 每页 5 本，直接发「下一页」或「第N页」翻页跳页（均无需 @机器人）。*5 per page; send `下一页` / `第N页` to page or jump, no mention needed.*
 
+- **以图搜本 Reverse image search** —— OCR 文字优先 → SauceNAO / E-Hentai / iQDB 并行识图 → Qwen3-VL 结构化提取标题/作者/标签**正向搜禁漫**兜底；同一张图结果缓存秒回；视觉模型可配（默认免费 Qwen3-VL-8B，可配 Qwen3-VL-30B-A3B 更快更准）。*OCR text first → SauceNAO / E-Hentai / iQDB in parallel → Qwen3-VL extracts title/author/tags for forward search on JM; identical-image results cached; vision model configurable (free Qwen3-VL-8B default, Qwen3-VL-30B-A3B for speed & accuracy).*
+
 - **加密 ZIP（AES-128）Encrypted ZIPs** —— QQ 上传会扫描 ZIP 内容并静默删除成人文件；加密使扫描失效（实测：未加密 `retcode=1200`，AES 加密 `retcode=0`）。*QQ scans ZIP contents on upload; encryption defeats it (verified: unencrypted `retcode=1200` → AES `retcode=0`).*
 
 - **浏览器下载链接 Browser download links** —— 每次下载附带 HTTP 直链兜底。*Every download also gets an HTTP link as a fallback.*
@@ -114,7 +128,7 @@
 
 - **稳定性保障 Stability** —— NapCat 看门狗每分钟检测、崩溃自动拉起（`-q` 快速登录免扫码，约 1-2 分钟恢复；10 分钟冷却）；升级窗口内 @机器人 自动回复"正在升级中"；被邀请进群自动同意并发欢迎消息。*Watchdog auto-recovery (~1-2 min: 1-min poll + `-q` quick login, 10-min cooldown); "upgrading" reply during deploys; auto-accepts group invites.*
 
-- **下载体验 Download UX** —— 进度汇报（下载/打包/上传全程每 10 秒一条）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、24 小时自动清理。*Progress reports (every 10 s across download/zip/upload), queue status with ETA, queueing (2 concurrent), auto CDN retry, 24-hour auto-cleanup.*
+- **下载体验 Download UX** —— 进度汇报（按完成百分比阈值触发、全程约 7 条不刷屏，上传按文件大小自适应）、排队时告知现有任务与预计时间、并发排队（2 本）、下载失败自动换 CDN 重试、24 小时自动清理。*Progress reports (percentage-threshold based, ~7 messages per download; upload interval adapts to file size), queue status with ETA, queueing (2 concurrent), auto CDN retry, 24-hour auto-cleanup.*
 
 ## 架构 Architecture
 
@@ -228,6 +242,8 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_LLM_KEY` | ❌ | 视觉大模型 API key（SiliconFlow，免费注册 https://siliconflow.cn；未填时以图搜本无内页 AI 识别层；已填时还可结构化提取标题/作者/标签正向搜禁漫）。Optional vision LLM API key (SiliconFlow; without it inner-page AI recognition is skipped; with it the bot can also extract title/author/tags for forward search on JM). |
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 | `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
+| `JM_LLM_MODEL` | ❌ | 识图视觉模型（可选；默认 Qwen/Qwen3-VL-8B-Instruct 免费档；付费可配 Qwen/Qwen3-VL-30B-A3B-Instruct，更快更准）。Optional vision model for image search (default free Qwen/Qwen3-VL-8B-Instruct; paid Qwen/Qwen3-VL-30B-A3B-Instruct is faster & better). |
+| `JM_NEW_IMAGE_SOURCES` | ❌ | 启用 ascii2d / Yandex 新识图源（默认空=关；数据中心 IP 会被反爬拦截，需配合住宅代理/`JM_PROXY` 才有效）。Enable ascii2d/Yandex image sources (empty=off; datacenter IPs are blocked by anti-bot, needs a residential proxy / `JM_PROXY`). |
 
 ## 运维 Operations
 
@@ -266,7 +282,7 @@ python deploy.py jm_niang.py
 python -m pytest test_jm_download.py
 ```
 
-覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页/跳页渲染、消息层全命令路由（全部离线，无需联网）。
+当前 **32 项全绿**（需 `JM_ZIP_PASSWORD` 环境变量）。覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页/跳页渲染、消息层全命令路由、识图/取消等（全部离线，无需联网）。 · **32 tests, all green** (requires `JM_ZIP_PASSWORD`). Covers ZIP encryption, CQ escaping, search-variant generation, author parsing, pagination/jump rendering, message-layer routing, image search & cancellation (offline).
 
 Covers ZIP encryption, CQ escaping, search-variant generation, author command parsing, pagination/jump rendering and message-layer command routing (all offline).
 
@@ -317,20 +333,38 @@ A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群
 ```
 jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页、自动同意邀请
                      # QQ bot main loop: OneBot WS client, command handling, uploads, pagination, auto-accept invites
-jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索、缓存、清理
-                     # jmcomic wrapper: download → AES ZIP, smart search, cache, cleanup
+jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索（四层变体）、以图搜本（OCR→引擎→LLM 结构化正向搜索+缓存）
+                     # jmcomic wrapper: download → AES ZIP, smart CJK search, image search (OCR→engines→LLM forward search + cache)
 maintain_reply.py    # 维护应答器：升级窗口内代答"正在升级中"（deploy.py 自动拉起/关闭）
                      # maintenance replier: answers @mentions with "upgrading" during deploy windows
 deploy.py            # 无感部署脚本：应答器→停机→上传→恢复→清理，失败自动回滚
                      # zero-downtime deploy script: replier → stop → upload → restore → cleanup, auto-rollback on failure
-napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉起 QQ（快速登录免扫码）
-                     # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (token-based quick login)
-qq_daily_restart.sh  # （已移除）原是每日 04:30 重启 QQ，崩溃误判时代产物，真相大白后取消；现在 QQ 只由 watchdog 按需拉起
-test_jm_download.py  # 离线单元测试（15 项）· offline unit tests (15 cases)
+napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉起 QQ（快速登录免扫码；用 /usr/sbin/ss 绝对路径）
+                     # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (absolute /usr/sbin/ss path)
+qq_official_bot.py   # 官方机器人接入（已停用备用）：真·按钮需官方机器人，群权限卡点后放弃，代码保留
+                     # official bot integration (disabled, kept for reference): real buttons need official bot; dropped after group-permission blocker
+test_jm_download.py  # 离线单元测试（32 项全绿）· offline unit tests (32 green)
+test_qq_official_bot.py # 官方机器人单元测试 · official-bot unit tests
+requirements.txt     # 依赖清单 · dependency list
+docs/qq-crash-issue.md # 掉线/崩溃问题完整技术档案（真相大白归档）· full crash/outage investigation archive
 .env.example         # 环境变量示例 · environment variable template
 start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
 ```
 
+## 更新日志 Changelog
+
+| 日期 Date | 里程碑 Milestone |
+|---|---|
+| 08-13 | 初版：下载→加密 ZIP→群文件+链接；四层智能搜索、翻页/跳页、作者/标签/榜单、随机、今日属性、以图搜本（OCR→SauceNAO/iQDB→Qwen3-VL） |
+| 08-14 | 稳定性攻坚：watchdog 误杀真相（`ss` PATH 坑，v6 修复）、反检测 bypass、无感部署、自动同意邀请 |
+| 08-15 | 腾讯弱密码爆破实锤 → ZIP 密码 `jm321`；安装包功能（安卓+苹果）；缓存 24h 清理 |
+| 08-17 | 免@按钮菜单；官方机器人真按钮路线尝试（被群权限卡点，放弃，代码保留） |
+| 08-19 | 取消/下载竞态修复；进度条改百分比阈值（全程约 7 条不刷屏） |
+| 08-20 | 识图 ascii2d+Yandex 新源（代码保留；服务器 DC IP 反爬，配代理后可启用） |
+| 08-21 | 识图增强：LLM 结构化正向搜索 + 图片结果缓存 + OCR 水印过滤 + 视觉模型可配（Qwen3-VL-30B-A3B） |
+
+*Initial release (08-13): download → AES ZIP → group files + link; 4-layer CJK search, pagination, author/tag/ranking, random, fortune, image search (OCR→SauceNAO/iQDB→Qwen3-VL). Stability (08-14): watchdog v6 fix, anti-detection, zero-downtime deploys, auto-accept invites. (08-15): weak-password brute-force found → `jm321`; installer feature. (08-17): mention-free button menu; official-bot buttons dropped. (08-19): cancel race fixes; percentage-threshold progress. (08-20): ascii2d/Yandex sources kept in code (datacenter IP blocked, enable with proxy). (08-21): LLM structured forward search + image cache + OCR watermark filter + configurable vision model (Qwen3-VL-30B-A3B).*
+
 ## License
 
-[MIT](LICENSE) © 2026 spdw666\n| JM_LLM_MODEL | ❌ | 识图视觉模型（可选；默认 Qwen/Qwen3-VL-8B-Instruct 免费档；付费可配 Qwen/Qwen3-VL-30B-A3B-Instruct 更快更准）。Optional vision model for image search (default free Qwen/Qwen3-VL-8B-Instruct; paid Qwen/Qwen3-VL-30B-A3B-Instruct is faster & better). |
+[MIT](LICENSE) © 2026 spdw666
