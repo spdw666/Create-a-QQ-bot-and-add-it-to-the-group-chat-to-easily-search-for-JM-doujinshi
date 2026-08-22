@@ -5,6 +5,7 @@
 每次操作使用独立连接，避免 asyncio 工作线程与主线程共享 sqlite 连接。
 """
 import os
+import json
 import sqlite3
 import time
 import uuid
@@ -55,6 +56,27 @@ def _init(conn):
     conn.execute('''
         CREATE INDEX IF NOT EXISTS idx_download_jobs_owner_created
         ON download_jobs(group_id, user_id, created_at DESC)
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            subscription_id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            target TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            cadence TEXT NOT NULL DEFAULT 'weekly',
+            created_at INTEGER NOT NULL,
+            last_checked_at INTEGER,
+            last_digest_at INTEGER,
+            seen_json TEXT NOT NULL DEFAULT '[]',
+            pending_json TEXT NOT NULL DEFAULT '[]',
+            UNIQUE(group_id, user_id, kind, target)
+        )
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_subscriptions_owner_created
+        ON subscriptions(group_id, user_id, created_at DESC)
     ''')
 
 
@@ -165,6 +187,138 @@ def cancel_latest_active_job(group_id, user_id):
             (now, job['job_id']),
         )
     return job
+
+
+def add_subscription(group_id, user_id, kind, target, label='', cadence='weekly'):
+    """保存作品/作者/标签订阅；重复订阅返回 False。"""
+    subscription_id = uuid.uuid4().hex
+    now = int(time.time())
+    with _connect() as conn:
+        _init(conn)
+        try:
+            conn.execute(
+                '''INSERT INTO subscriptions
+                   (subscription_id, group_id, user_id, kind, target, label, cadence, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (subscription_id, str(group_id), str(user_id), kind, str(target), str(label), cadence, now),
+            )
+        except sqlite3.IntegrityError:
+            return None
+    return subscription_id
+
+
+def list_subscriptions(group_id, user_id, limit=20):
+    with _connect() as conn:
+        _init(conn)
+        rows = conn.execute(
+            '''SELECT * FROM subscriptions WHERE group_id = ? AND user_id = ?
+               ORDER BY created_at DESC LIMIT ?''',
+            (str(group_id), str(user_id), int(limit)),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_all_subscriptions():
+    """供后台聚合检查读取；不包含任何聊天正文。"""
+    with _connect() as conn:
+        _init(conn)
+        rows = conn.execute('SELECT * FROM subscriptions ORDER BY created_at ASC').fetchall()
+    return [dict(row) for row in rows]
+
+
+def remove_subscription_by_recent_index(group_id, user_id, index):
+    if index < 1:
+        return None
+    subscriptions = list_subscriptions(group_id, user_id, limit=index)
+    if len(subscriptions) < index:
+        return None
+    subscription = subscriptions[index - 1]
+    with _connect() as conn:
+        _init(conn)
+        conn.execute('DELETE FROM subscriptions WHERE subscription_id = ?', (subscription['subscription_id'],))
+    return subscription
+
+
+def set_subscription_cadence(group_id, user_id, cadence):
+    with _connect() as conn:
+        _init(conn)
+        cur = conn.execute(
+            'UPDATE subscriptions SET cadence = ? WHERE group_id = ? AND user_id = ?',
+            (cadence, str(group_id), str(user_id)),
+        )
+    return cur.rowcount
+
+
+def update_subscription_state(subscription_id, *, seen=None, pending=None,
+                              checked=False, digested=False):
+    fields, values = [], []
+    if seen is not None:
+        fields.append('seen_json = ?')
+        values.append(json.dumps(seen, ensure_ascii=False)[:8000])
+    if pending is not None:
+        fields.append('pending_json = ?')
+        values.append(json.dumps(pending, ensure_ascii=False)[:8000])
+    now = int(time.time())
+    if checked:
+        fields.append('last_checked_at = ?')
+        values.append(now)
+    if digested:
+        fields.append('last_digest_at = ?')
+        values.append(now)
+    if not fields:
+        return
+    values.append(subscription_id)
+    with _connect() as conn:
+        _init(conn)
+        conn.execute('UPDATE subscriptions SET ' + ', '.join(fields) + ' WHERE subscription_id = ?', values)
+
+
+def decode_subscription_json(value):
+    try:
+        decoded = json.loads(value or '[]')
+        return decoded if isinstance(decoded, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def list_active_jobs_all(limit=30):
+    with _connect() as conn:
+        _init(conn)
+        rows = conn.execute(
+            '''SELECT job_id, group_id, user_id, album_id, title, source, status, created_at
+               FROM download_jobs WHERE status IN ('queued', 'running')
+               ORDER BY created_at ASC LIMIT ?''', (int(limit),)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def cancel_job_by_prefix(job_prefix):
+    """管理员按至少 6 位内部任务 ID 前缀取消排队/执行任务。"""
+    prefix = str(job_prefix or '').strip().lower()
+    if len(prefix) < 6:
+        return None
+    with _connect() as conn:
+        _init(conn)
+        rows = conn.execute(
+            "SELECT * FROM download_jobs WHERE job_id LIKE ? AND status IN ('queued', 'running') LIMIT 2",
+            (prefix + '%',),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        job = dict(rows[0])
+        conn.execute(
+            "UPDATE download_jobs SET status = 'cancelled', error = '管理员取消', finished_at = ? WHERE job_id = ?",
+            (int(time.time()), job['job_id']),
+        )
+    return job
+
+
+def get_store_stats():
+    with _connect() as conn:
+        _init(conn)
+        job_rows = conn.execute('SELECT status, COUNT(*) AS count FROM download_jobs GROUP BY status').fetchall()
+        subscription_count = conn.execute('SELECT COUNT(*) AS count FROM subscriptions').fetchone()['count']
+    return {'jobs': {row['status']: row['count'] for row in job_rows}, 'subscriptions': subscription_count}
 
 
 def get_job_by_recent_index(group_id, user_id, index):

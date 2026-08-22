@@ -24,19 +24,30 @@ import datetime
 import websockets
 
 from jm_store import (
+    add_subscription,
+    cancel_job_by_prefix,
     cancel_latest_active_job,
     count_active_jobs,
     create_job,
+    decode_subscription_json,
     get_job,
     get_job_by_recent_index,
+    get_store_stats,
     list_jobs,
+    list_all_subscriptions,
+    list_active_jobs_all,
+    list_subscriptions,
+    remove_subscription_by_recent_index,
+    set_subscription_cadence,
     update_job,
+    update_subscription_state,
 )
 
 from jm_download import (
     download_album_to_zip,
     find_cached_zip,
     get_album_info,
+    get_album_chapters,
     get_random_hot_album,
     get_random_tag_album,
     search_album,
@@ -44,8 +55,11 @@ from jm_download import (
     search_tag_album,
     get_ranking,
     search_by_image,
+    search_by_image_deep,
     count_images,
     cleanup_old_dirs,
+    download_album_chapters_to_zip,
+    split_zip_for_delivery,
     cancel_download,
     cleanup_cancelled,
     DownloadCancelledError,
@@ -75,6 +89,10 @@ DOWNLOAD_QUEUE = 0  # 当前排队等待的任务数（排队位置提示用）
 ACTIVE_TASKS = {}  # 正在处理的任务状态：album_id -> {phase, done, total}（排队告知用）
 # 单个用户至多一项执行中和一项等待任务，避免一个人占满全局下载槽位。
 MAX_ACTIVE_JOBS_PER_USER = 2
+ADMIN_USERS = {value.strip() for value in os.environ.get('JM_ADMIN_USERS', '').split(',') if value.strip()}
+QUEUE_PAUSED = False
+QUEUE_RESUME_EVENT = asyncio.Event()
+QUEUE_RESUME_EVENT.set()
 
 # ---------- HTTP 下载链接分享配置 ----------
 # 服务器公网IP与HTTP服务端口（腾讯云轻量控制台需放行该端口）
@@ -155,6 +173,8 @@ HELP_TEXT = (
     '   例：@JM娘 1460484\n'
     '   （也支持 @JM娘 /jm1460484）\n'
     '   下载前会先告知页数和预计时间\n\n'
+    '📚 指定章节：@我 下载 JM123456 第2-5章\n'
+    '   或：@我 下载 JM123456 最新\n\n'
     '🛑 取消下载：@我 取消\n'
     '   （也支持：停止 / stop / 算了）\n'
     '   停止当前下载并清除已下载的缓存\n\n'
@@ -163,6 +183,8 @@ HELP_TEXT = (
     '🧾 我的下载：@我 我的下载 / 我的任务\n'
     '   查看你自己的下载历史与当前任务（机器人重启后仍保留）\n'
     '   @我 重发 1 可重新处理第 1 条记录\n\n'
+    '⭐ 收藏订阅：@我 收藏 JM123456 / 订阅作者 名字 / 订阅标签 标签\n'
+    '   @我 我的收藏 · 取消收藏 1 · 订阅设置 每周\n\n'
     '🔍 自查：@我 自查\n'
     '   查看运行时长与当前连接状态\n\n'
     '🎲 随机推荐：@我 随机\n'
@@ -223,6 +245,7 @@ BUTTON_MENU = (
     '   〔菜单〕@我 菜单 · 〔说明〕@我 说明\n'
     '   搜索超过5本：直接发〔下一页〕/〔第3页〕翻页\n'
     '   我的记录：@我 我的下载 / 我的任务\n'
+    '   收藏订阅：@我 收藏 JM123456 / 我的收藏\n'
     '   取消下载：@我 取消\n'
     f'   🔐 压缩包密码：{ZIP_PASSWORD}\n'
 )
@@ -255,6 +278,16 @@ TASK_WORDS = {'任务', '队列', '排队', 'task', 'queue'}
 MY_TASK_WORDS = {'我的任务', '我的下载', '下载历史', '我的历史'}
 RESEND_RE = re.compile(r'^\s*重发\s*(\d{1,2})\s*$')
 
+# 收藏/订阅：默认周报，后台每小时检查一次变化并聚合到到期摘要中。
+FAVORITE_RE = re.compile(r'^\s*收藏\s*(.+?)\s*$')
+SUBSCRIBE_AUTHOR_RE = re.compile(r'^\s*订阅作者\s+(.+?)\s*$')
+SUBSCRIBE_TAG_RE = re.compile(r'^\s*订阅标签\s+(.+?)\s*$')
+UNSUBSCRIBE_RE = re.compile(r'^\s*(?:取消收藏|取消订阅)\s*(\d{1,2})\s*$')
+SUBSCRIPTION_SETTING_RE = re.compile(r'^\s*订阅设置\s*(每日|每天|每周)\s*$')
+MY_FAVORITE_WORDS = {'我的收藏', '我的订阅', '订阅列表'}
+SUBSCRIPTION_CHECK_SECONDS = int(os.environ.get('JM_SUBSCRIPTION_CHECK_SECONDS', '3600'))
+SUBSCRIPTION_CADENCE_SECONDS = {'daily': 86400, 'weekly': 7 * 86400}
+
 # 自查命令词（@机器人 自查 → 报告运行时长与连接状态）
 SELF_CHECK_WORDS = {'自查'}
 
@@ -263,6 +296,7 @@ NEXT_WORDS = {'下一页', '翻页', '下页', 'next'}
 
 # 重新搜索命令词（@触发：对上次搜索结果不满意时重搜）
 RETRY_WORDS = {'不对', '重新搜', '错了', '重搜', '搜错了', 'retry'}
+DEEP_IMAGE_RETRY_WORDS = {'都不对', '深度识图', '深搜'}
 
 # 识图意图命令词（@触发：进入 20 秒等待窗口，期间直接发的图自动识图）
 IMAGE_WAIT_WORDS = {'识图', '搜图', '以图搜本', '搜本'}
@@ -353,9 +387,13 @@ def render_image_result(result):
     if result['matches']:
         lines.append(f'📚 禁漫匹配到 {len(result["matches"])} 本：')
         for i, r in enumerate(result['matches'], 1):
+            score, reason = image_match_confidence(result, r)
+            stars = '★' * score + '☆' * (5 - score)
             lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
-                         f'   🔢 ID：{r["id"]}')
-        lines.append('想要下载？@我 + 发送对应的ID，或 @我「下载 1」')
+                         f'   🔢 ID：{r["id"]}\n'
+                         f'   可信度：{stars}（{escape_cq(reason)}）')
+        lines.append('想要下载？@我 + 发送对应的ID，或 @我「下载 1」\n'
+                     '都不对？@我 发送「都不对」进入深度识图')
     else:
         lines.append('⚠️ 禁漫未搜到同款本子')
     return '\n'.join(lines)
@@ -652,6 +690,21 @@ def _qq_process_etime():
     return None
 
 
+def extract_chapter_download(text: str):
+    """解析“下载 JM123456 第2-5章”或“下载 123456 最新”。"""
+    if not text:
+        return None
+    m = re.fullmatch(
+        r'\s*(?:下载|下)\s*(?:/)?(?:jm)?\s*(\d{5,9})\s*'
+        r'(?:(?:第\s*(\d+)\s*(?:[-~～到至]\s*(\d+)\s*)?章)|最新)\s*',
+        text, re.IGNORECASE,
+    )
+    if not m:
+        return None
+    album_id, start, end = m.groups()
+    return album_id, ('latest' if start is None else (int(start), int(end or start)))
+
+
 def extract_result_action(text: str):
     """解析“下载 3”/“详情 3”这类基于当前结果列表的操作。
 
@@ -676,6 +729,14 @@ def get_result_by_index(group_id, user_id, index):
         return None
     state['ts'] = time.time()
     return results[index - 1]
+
+
+def chapter_range_from_source(source):
+    """从持久化来源字段恢复章节范围；整本任务返回 None。"""
+    m = re.fullmatch(r'chapter:(\d+)(?:-(\d+))?', str(source or ''))
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2) or m.group(1))
 
 
 def _parse_etime(t):
@@ -711,6 +772,40 @@ def render_self_check():
     return '\n'.join(lines)
 
 
+def _match_text(value):
+    return re.sub(r'[^\w\u4e00-\u9fffぁ-んァ-ン]', '', str(value or '')).lower()
+
+
+def image_match_confidence(result, match):
+    """给识图候选一个可解释的 1–5 星置信度，不把推测伪装成确定答案。"""
+    title = _match_text(match.get('title'))
+    score, reasons = 1, []
+    source_title = _match_text(result.get('source_title'))
+    if source_title and title and (source_title in title or title in source_title):
+        score += 2
+        reasons.append('标题验证')
+    for word in (result.get('ocr_texts') or [])[:6]:
+        normalized = _match_text(word)
+        if len(normalized) >= 3 and title and normalized in title:
+            score += 1
+            reasons.append('OCR')
+            break
+    for word in (result.get('llm_words') or [])[:4]:
+        normalized = _match_text(word)
+        if len(normalized) >= 3 and title and normalized in title:
+            score += 1
+            reasons.append('AI 提取')
+            break
+    author = _match_text(result.get('source_author'))
+    if author and author in _match_text(match.get('author')):
+        score += 1
+        reasons.append('作者验证')
+    if result.get('source_url'):
+        reasons.append('视觉来源')
+    score = max(1, min(5, score))
+    return score, ' + '.join(dict.fromkeys(reasons)) or '候选匹配'
+
+
 def render_task_status():
     """当前正在处理的任务状态文本（含预计剩余时间）。无任务返回空串"""
     lines = []
@@ -725,6 +820,30 @@ def render_task_status():
         else:
             lines.append(f'{len(lines) + 1}. 漫画 {aid}：准备中…')
     return '\n'.join(lines)
+
+
+async def render_admin_status():
+    """管理员诊断：只展示机器人任务元数据与本机资源，不含用户聊天内容/凭据。"""
+    stats = await asyncio.to_thread(get_store_stats)
+    jobs = await asyncio.to_thread(list_active_jobs_all)
+    usage = shutil.disk_usage(BASE_DIR)
+    lines = [
+        '🛠️ 管理诊断',
+        f'· 队列：{"已暂停" if QUEUE_PAUSED else "运行中"}；全局并发 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}',
+        f'· 磁盘：可用 {format_bytes(usage.free)} / 总计 {format_bytes(usage.total)}',
+        f'· 持久化任务：{stats.get("jobs", {})}；订阅 {stats.get("subscriptions", 0)} 项',
+        f'· 进程：已运行 {_fmt_duration(time.time() - START_TIME)}；NapCat {"已连接" if CUR_CONN_TIME else "未连接"}',
+    ]
+    if jobs:
+        lines.append('· 活跃任务：')
+        for job in jobs[:10]:
+            title = escape_cq(job.get('title') or f'JM{job["album_id"]}')
+            lines.append(f'  {job["job_id"][:8]} {job["status"]} 群{job["group_id"]} 用户{job["user_id"]} 《{title}》')
+    return '\n'.join(lines)
+
+
+def is_admin(user_id):
+    return str(user_id) in ADMIN_USERS
 
 
 def _job_status_text(status):
@@ -779,6 +898,102 @@ async def send_album_detail(api, group_id, album_id):
     return None
 
 
+def _subscription_kind_text(kind):
+    return {'album': '作品收藏', 'author': '作者订阅', 'tag': '标签订阅'}.get(kind, kind)
+
+
+def render_subscriptions(group_id, user_id):
+    subscriptions = list_subscriptions(group_id, user_id)
+    if not subscriptions:
+        return ''
+    lines = []
+    for index, sub in enumerate(subscriptions, 1):
+        label = escape_cq(sub.get('label') or sub['target'])
+        cadence = '日报' if sub.get('cadence') == 'daily' else '周报'
+        lines.append(f'{index}. {_subscription_kind_text(sub["kind"])}：{label}（{cadence}）')
+    return '\n'.join(lines)
+
+
+def _subscription_items(sub):
+    """同步查询单个订阅的最新候选，返回用于去重的简化项目列表。"""
+    kind, target = sub['kind'], sub['target']
+    if kind == 'author':
+        results = search_author_album(target, 20) or []
+        return [{'id': str(item['id']), 'title': item.get('title', '')} for item in results]
+    if kind == 'tag':
+        results = search_tag_album(target, 20) or []
+        return [{'id': str(item['id']), 'title': item.get('title', '')} for item in results]
+    if kind == 'album':
+        info = get_album_info(target)
+        if not info:
+            return []
+        # 页数变化可作为连载作品更新信号。
+        return [{'id': str(target), 'title': info.get('title', ''), 'version': str(info.get('page_count', 0))}]
+    return []
+
+
+def _subscription_item_key(item):
+    return f'{item.get("id", "")}:{item.get("version", "")}'
+
+
+async def check_subscriptions(api, force_digest=False):
+    """检查订阅并按个人节奏发送聚合摘要；首轮只建立基线，不打扰用户。"""
+    now = int(time.time())
+    digest_lines, to_mark_digested = {}, []
+    subscriptions = await asyncio.to_thread(list_all_subscriptions)
+    for sub in subscriptions:
+        if not force_digest and sub.get('last_checked_at') and now - sub['last_checked_at'] < SUBSCRIPTION_CHECK_SECONDS:
+            continue
+        try:
+            current = await asyncio.to_thread(_subscription_items, sub)
+        except Exception as e:
+            log(f'订阅检查失败 {sub["subscription_id"][:8]}: {e!r}')
+            continue
+        current = current[:30]
+        seen = decode_subscription_json(sub.get('seen_json'))
+        pending = decode_subscription_json(sub.get('pending_json'))
+        if not seen:
+            # 初次收藏仅记录当前版本，避免把历史内容当成“新更新”。
+            await asyncio.to_thread(update_subscription_state, sub['subscription_id'],
+                                    seen=current, pending=pending, checked=True, digested=True)
+            continue
+        seen_keys = {_subscription_item_key(item) for item in seen}
+        new_items = [item for item in current if _subscription_item_key(item) not in seen_keys]
+        pending_keys = {_subscription_item_key(item) for item in pending}
+        pending.extend(item for item in new_items if _subscription_item_key(item) not in pending_keys)
+        await asyncio.to_thread(update_subscription_state, sub['subscription_id'],
+                                seen=current, pending=pending[-30:], checked=True)
+        cadence = SUBSCRIPTION_CADENCE_SECONDS.get(sub.get('cadence'), SUBSCRIPTION_CADENCE_SECONDS['weekly'])
+        due = force_digest or (sub.get('last_digest_at') and now - sub['last_digest_at'] >= cadence)
+        if pending and due:
+            key = (sub['group_id'], sub['user_id'])
+            label = escape_cq(sub.get('label') or sub['target'])
+            previews = '；'.join(f'《{escape_cq(item.get("title") or item.get("id"))}》' for item in pending[:5])
+            digest_lines.setdefault(key, []).append(
+                f'· {_subscription_kind_text(sub["kind"])}「{label}」新增 {len(pending)} 项：{previews}'
+            )
+            to_mark_digested.append(sub['subscription_id'])
+    for (group_id, user_id), lines in digest_lines.items():
+        await api('send_group_msg', {
+            'group_id': int(group_id) if str(group_id).isdigit() else group_id,
+            'message': f'[CQ:at,qq={user_id}] 📬 JM娘订阅摘要\n' + '\n'.join(lines) +
+                       '\n💡 可发送「我的收藏」管理订阅。'
+        })
+    for subscription_id in to_mark_digested:
+        await asyncio.to_thread(update_subscription_state, subscription_id, pending=[], digested=True)
+
+
+async def subscription_loop(api):
+    while True:
+        try:
+            await check_subscriptions(api)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log(f'订阅后台任务出错: {e!r}')
+        await asyncio.sleep(max(60, SUBSCRIPTION_CHECK_SECONDS))
+
+
 # 进度条总条数控制：大本子（~90页起）全程约 7 条，小本子（几十页）目标条数随页数减少（2~4条），控制总量不刷屏。
 TARGET_PROGRESS_MSGS = 7          # 大本子封顶的总进度条数
 PROGRESS_MIN_MSGS = 2             # 小本子最少 2 条
@@ -818,11 +1033,11 @@ def progress_interval(total_pages):
     return max(PROGRESS_INTERVAL_MIN, interval)
 
 
-async def monitor_progress(api, group_id, album_id, total_pages, download_task):
+async def monitor_progress(api, group_id, album_id, total_pages, download_task, task_dir=None):
     """定时汇报下载进度：**按进度百分比阈值触发**（依赖目标条数），无论下载快慢，
     中途汇报条数都被严格控制在目标条数以内，杜绝卡网时刷屏。
     达到 100% 进入打包阶段发一次性提示。"""
-    task_dir = os.path.join(DOWNLOAD_DIR, str(album_id))
+    task_dir = task_dir or os.path.join(DOWNLOAD_DIR, str(album_id))
     target = _target_progress_msgs(total_pages)
     # 阈值断点：例如 target=4 → [0.25,0.5,0.75]（发3条中途进度，100%时由打包分支提示）
     thresholds = _progress_thresholds(target)
@@ -886,7 +1101,61 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
         await asyncio.sleep(3)
 
 
-async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
+async def upload_delivery_file(api, group_id, album_id, zip_path, part_index=1, part_total=1):
+    """上传一个交付 ZIP 并发布 HTTP 链接；返回上传状态和链接。"""
+    loop = asyncio.get_event_loop()
+    size = os.path.getsize(zip_path)
+    file_name = os.path.basename(zip_path)
+    http_url = await loop.run_in_executor(None, publish_http_link, zip_path)
+    prefix = f'（第 {part_index}/{part_total} 卷）' if part_total > 1 else ''
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': f'《{escape_cq(file_name)}》{prefix}\n大小：{format_bytes(size)}\n正在上传到群文件…'
+    })
+    result, last_err = None, ''
+    upload_interval = max(10, min(30, int(size / (10 * 1024 * 1024))))
+    for attempt in range(1, 3):
+        upload_task = asyncio.create_task(api('upload_group_file', {
+            'group_id': group_id, 'file': zip_path, 'name': file_name,
+        }, timeout=1200))
+        waited = 0
+        while not upload_task.done():
+            await asyncio.sleep(upload_interval)
+            if upload_task.done():
+                break
+            waited += upload_interval
+            try:
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': f'📤 漫画 {album_id}{prefix} 上传中…已等待 {waited} 秒'
+                })
+            except Exception:
+                pass
+        try:
+            result = await upload_task
+        except asyncio.TimeoutError:
+            last_err, result = '上传超时', None
+        except Exception as e:
+            last_err, result = str(e), None
+        retcode = result.get('retcode') if result else None
+        if retcode == 0:
+            break
+        exists = await _group_file_exists(api, group_id, file_name)
+        if exists is True:
+            log(f'上传事件确认失败但群文件已存在（假失败），视为成功: {file_name}')
+            result = {'retcode': 0}
+            break
+        if attempt >= 2:
+            log(f'上传失败(第{attempt}次): {last_err or retcode}')
+            break
+        await asyncio.sleep(8)
+    return {
+        'path': zip_path, 'name': file_name, 'size': size, 'url': http_url,
+        'retcode': result.get('retcode') if result else None, 'error': last_err,
+    }
+
+
+async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None, chapter_range=None):
     """下载并上传一个漫画，负责回复群消息"""
     loop = asyncio.get_event_loop()
     # 重复请求防护：同一漫画已在下载/上传流程中时不再重复发起（防 QQ 消息重推导致发两个包）
@@ -908,7 +1177,9 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
         await asyncio.to_thread(update_job, job_id, status='running', started=True)
     try:
         # 1. 缓存命中则直接上传（旧缓存若未加密，现场转加密，否则QQ会拒收）
-        cached_zip, cached_title = await loop.run_in_executor(None, find_cached_zip, album_id)
+        cached_zip, cached_title = (None, None)
+        if chapter_range is None:
+            cached_zip, cached_title = await loop.run_in_executor(None, find_cached_zip, album_id)
         if cached_zip:
             if ZIP_ENCRYPT:
                 cached_zip = await loop.run_in_executor(None, ensure_encrypted_zip, cached_zip)
@@ -928,17 +1199,18 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
                 'message': f'收到！正在获取漫画 {album_id} 的信息…'
             })
             info = await loop.run_in_executor(None, get_album_info, album_id)
-            total_pages = info['page_count'] if info else 0
+            total_pages = info['page_count'] if info and chapter_range is None else 0
             if info:
                 if job_id:
                     await asyncio.to_thread(update_job, job_id, title=info['title'], total_pages=total_pages)
                 est_low = max(1, int(total_pages * SECONDS_PER_PAGE_MIN / 60))
                 est_high = max(est_low + 1, int(total_pages * SECONDS_PER_PAGE_MAX / 60))
+                scope = '' if chapter_range is None else f'（指定第 {chapter_range[0]}-{chapter_range[1]} 章）'
                 await api('send_group_msg', {
                     'group_id': group_id,
                     'message': f'📋 漫画信息确认\n'
                                f'📕《{escape_cq(info["title"])}》\n'
-                               f'📚 共 {info["chapter_count"]} 章 / {total_pages} 页\n'
+                               f'📚 共 {info["chapter_count"]} 章 / {info["page_count"]} 页 {scope}\n'
                                f'⏱️ 预计下载 {est_low}-{est_high} 分钟（取决于网速）\n'
                                f'📦 下载完自动打包ZIP上传群文件\n'
                                f'❌ 不想要了？@我 发送「取消」'
@@ -952,13 +1224,21 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
             # 3. 启动下载 + 进度轮询（活跃任务已在入口登记占位）
             ACTIVE_TASKS[album_id]['phase'] = '下载中'
             ACTIVE_TASKS[album_id]['total'] = total_pages
-            download_task = loop.create_task(
-                asyncio.to_thread(download_album_to_zip, album_id)
-            )
+            if chapter_range is None:
+                download_task = loop.create_task(asyncio.to_thread(download_album_to_zip, album_id))
+            else:
+                download_task = loop.create_task(asyncio.to_thread(
+                    download_album_chapters_to_zip, album_id, chapter_range[0], chapter_range[1]
+                ))
+            progress_dir = None
+            if chapter_range is not None:
+                selector = str(chapter_range[0]) if chapter_range[0] == chapter_range[1] else f'{chapter_range[0]}-{chapter_range[1]}'
+                progress_dir = os.path.join(DOWNLOAD_DIR, 'partials', str(album_id), selector)
             progress_task = loop.create_task(
-                monitor_progress(api, group_id, album_id, total_pages, download_task)
+                monitor_progress(api, group_id, album_id, total_pages, download_task, progress_dir)
             )
-            zip_path, title = await download_task
+            result_data = await download_task
+            zip_path, title = result_data[0], result_data[1]
             await progress_task
 
             # 4. 下载期间被取消：清理残留并回复
@@ -975,85 +1255,36 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
 
             # 打包提示已由 monitor_progress 在打包开始时发送，此处不重复
 
-        size = os.path.getsize(zip_path)
-        file_name = os.path.basename(zip_path)
-        pwd_note = zip_password_note(zip_path)
         if album_id in ACTIVE_TASKS:
             ACTIVE_TASKS[album_id]['phase'] = '上传中'
-
-        # 发布HTTP下载链接（无论群文件上传成败都发，双保险）
-        http_url = await loop.run_in_executor(None, publish_http_link, zip_path)
-
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': f'《{escape_cq(title)}》\n大小：{format_bytes(size)}\n正在上传到群文件…'
-        })
-
-        # 上传群文件（大文件可能较慢，给足超时；QQ偶发限流，自动重试2次）
-        # 注意：NapCat 大文件上传常出现"事件确认超时"假失败（文件实际已上传成功），
-        # 重试前先查群文件列表，已存在则视为成功；查列表 API 异常时不再盲目重试（防重复文件）
-        result = None
-        last_err = ''
-        # 上传进度间隔按文件大小自适应：小文件勤、大文件稀，避免刷屏
-        upload_interval = max(10, min(30, int(size / (10 * 1024 * 1024))))  # 10MB→10s，300MB→30s，封顶30s
-        for attempt in range(1, 3):
-            # 上传中按 upload_interval 报一次进度（避免以为卡住，大文件报稀一些）
-            upload_task = asyncio.create_task(api('upload_group_file', {
+        delivery_paths = await loop.run_in_executor(None, split_zip_for_delivery, zip_path)
+        if len(delivery_paths) > 1:
+            await api('send_group_msg', {
                 'group_id': group_id,
-                'file': zip_path,
-                'name': file_name,
-            }, timeout=1200))
-            waited = 0
-            while not upload_task.done():
-                await asyncio.sleep(upload_interval)
-                if upload_task.done():
-                    break  # sleep 期间上传已完成（文件已出），不再补发进度
-                waited += upload_interval
-                try:
-                    await api('send_group_msg', {
-                        'group_id': group_id,
-                        'message': f'📤 漫画 {album_id} 上传中…已等待 {waited} 秒'
-                    })
-                except Exception:
-                    pass
-            try:
-                result = await upload_task
-            except asyncio.TimeoutError:
-                last_err = '上传超时'
-                result = None
-            except Exception as e:
-                last_err = str(e)
-                result = None
-
-            retcode = result.get('retcode') if result else None
-            if retcode == 0:
-                break
-            # 超时/非0 retcode：先做假失败检测（事件确认失败但文件可能已传上）
-            exists = await _group_file_exists(api, group_id, file_name)
-            if exists is True:
-                log(f'上传事件确认失败但群文件已存在（假失败），视为成功: {file_name}')
-                result = {'retcode': 0}
-                break
-            if attempt >= 2:
-                log(f'上传失败(第{attempt}次): {last_err or retcode}')
-                break
-            log(f'上传失败(第{attempt}次): {last_err or retcode}，8秒后重试…')
-            await asyncio.sleep(8)
-
-        retcode = result.get('retcode') if result else None
+                'message': f'📦 文件过大，已自动分为 {len(delivery_paths)} 个可独立解压的加密 ZIP。'
+            })
+        deliveries = []
+        for index, delivery_path in enumerate(delivery_paths, 1):
+            deliveries.append(await upload_delivery_file(
+                api, group_id, album_id, delivery_path, index, len(delivery_paths)
+            ))
+        uploaded = all(item['retcode'] in (0, None) for item in deliveries)
         if job_id:
             await asyncio.to_thread(
                 update_job, job_id, status='completed', title=title, zip_path=zip_path,
-                upload_status='group_file' if retcode in (0, None) else 'link_only', finished=True,
+                upload_status='group_file' if uploaded else 'link_only', finished=True,
             )
-        if retcode in (0, None):
-            msg = f'✅ 已上传到群文件：{escape_cq(file_name)}\n（{format_bytes(size)}）'
+        if uploaded:
+            names = '、'.join(escape_cq(item['name']) for item in deliveries)
+            msg = f'✅ 已上传到群文件：{names}'
         else:
-            msg = f'⚠️ 群文件上传失败：{last_err or f"retcode={retcode}"}\n' \
-                  f'QQ风控/文件过大常导致此问题，文件仍在服务器本地，可直接用下方浏览器链接下载'
-        # 浏览器下载链接优先展示（不经过QQ审核，稳定可用）
-        if http_url:
-            msg += f'\n\n📎 浏览器直接下载：{escape_cq(http_url)}'
+            errors = '; '.join(item['error'] or str(item['retcode']) for item in deliveries if item['retcode'] not in (0, None))
+            msg = f'⚠️ 部分群文件上传失败：{escape_cq(errors)}\n可使用下方浏览器链接下载'
+        urls = [item['url'] for item in deliveries if item['url']]
+        if urls:
+            label = '📎 浏览器直接下载：' if len(urls) == 1 else '📎 浏览器直接下载（每卷独立）：'
+            msg += '\n\n' + label + '\n' + '\n'.join(escape_cq(url) for url in urls)
+        pwd_note = zip_password_note(zip_path)
         if pwd_note:
             msg += f'\n\n{pwd_note}'
         await api('send_group_msg', {
@@ -1092,7 +1323,7 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
         ACTIVE_TASKS.pop(album_id, None)
 
 
-async def enqueue_download(ws, api, group_id, user_id, album_id, source='id'):
+async def enqueue_download(ws, api, group_id, user_id, album_id, source='id', chapter_range=None):
     """登记个人任务后进入现有全局并发队列。"""
     global DOWNLOAD_QUEUE
     active_count = await asyncio.to_thread(count_active_jobs, group_id, user_id)
@@ -1116,18 +1347,19 @@ async def enqueue_download(ws, api, group_id, user_id, album_id, source='id'):
             await api('send_group_msg', {'group_id': group_id, 'message': msg})
 
         async with SEMAPHORE:
+            await QUEUE_RESUME_EVENT.wait()
             job = await asyncio.to_thread(get_job, job_id)
             if not job or job.get('status') == 'cancelled':
                 return  # 在排队期间被“取消”命令撤销
-            await handle_jm_request(ws, api, group_id, user_id, album_id, job_id)
+            await handle_jm_request(ws, api, group_id, user_id, album_id, job_id, chapter_range)
     finally:
         DOWNLOAD_QUEUE -= 1
 
 
-async def _search_image_with_timeout(img_bytes, timeout=60):
-    """识图总超时：60 秒内没结果就放弃（用户要求：识图太慢就放弃）"""
+async def _search_image_with_timeout(img_bytes, timeout=60, deep=False):
+    """识图超时保护；深度模式绕过缓存并额外识别中心裁图。"""
     return await asyncio.wait_for(
-        asyncio.to_thread(search_by_image, img_bytes), timeout=timeout)
+        asyncio.to_thread(search_by_image_deep if deep else search_by_image, img_bytes), timeout=timeout)
 
 
 def ensure_apk_zip():
@@ -1614,6 +1846,89 @@ async def handle_message(ws, api, msg, bot_qq):
         await handle_next_page(api, group_id, user_id, page=page_num)
         return
 
+    # 深度识图：与普通重搜不同，绕过缓存并以中心裁图再次识别、合并候选。
+    if text.lower() in DEEP_IMAGE_RETRY_WORDS:
+        state = get_search_state(group_id, user_id)
+        if not state or state.get('kind') != 'image' or time.time() - state['ts'] > SEARCH_STATE_TTL:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '📄 没有可深度复核的识图记录（请先发图识别）'
+            })
+            return
+        img_bytes = state.get('img_bytes')
+        if not img_bytes:
+            await api('send_group_msg', {'group_id': group_id, 'message': '❌ 图片已过期，请重新发图'})
+            return
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '🧪 正在深度识图：将跳过缓存，并对封面主体重新检索（最多约90秒）…'
+        })
+        try:
+            result = await _search_image_with_timeout(img_bytes, timeout=90, deep=True)
+        except asyncio.TimeoutError:
+            await api('send_group_msg', {'group_id': group_id, 'message': '⏱️ 深度识图超时，已停止。请换更清晰的原图再试'})
+            return
+        if result is None:
+            await api('send_group_msg', {'group_id': group_id, 'message': '❌ 深度识图未找到新线索，请换原图或包含标题的页面'})
+            return
+        state['results'] = result.get('matches') or []
+        state['ts'] = time.time()
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '🧪 深度复核完成（原图 + 中心裁图）：\n' + render_image_result(result)
+        })
+        return
+
+    # 管理命令：管理员白名单来自 JM_ADMIN_USERS；未配置时默认无人拥有管理权限。
+    if text.startswith('管理') or text.startswith('管理员'):
+        if not is_admin(user_id):
+            await api('send_group_msg', {'group_id': group_id, 'message': '⛔ 该命令仅限管理员使用'})
+            return
+        command = re.sub(r'^(?:管理员|管理)\s*', '', text).strip()
+        if command in {'', '帮助', 'help'}:
+            help_text = ('🛠️ 管理命令\n'
+                         '· 管理 状态 / 管理 任务\n'
+                         '· 管理 暂停队列 / 管理 恢复队列\n'
+                         '· 管理 取消 <任务ID前6位>\n'
+                         '· 管理 检查订阅 / 管理 发送订阅摘要')
+            await api('send_group_msg', {'group_id': group_id, 'message': help_text})
+            return
+        if command in {'状态', '任务', '自查'}:
+            await api('send_group_msg', {'group_id': group_id, 'message': await render_admin_status()})
+            return
+        if command in {'暂停队列', '暂停'}:
+            global QUEUE_PAUSED
+            QUEUE_PAUSED = True
+            QUEUE_RESUME_EVENT.clear()
+            await api('send_group_msg', {'group_id': group_id, 'message': '⏸️ 队列已暂停：正在下载/上传的任务会完成，未开始任务保持等待'})
+            return
+        if command in {'恢复队列', '恢复'}:
+            QUEUE_PAUSED = False
+            QUEUE_RESUME_EVENT.set()
+            await api('send_group_msg', {'group_id': group_id, 'message': '▶️ 队列已恢复'})
+            return
+        cancel_match = re.fullmatch(r'取消\s+([0-9a-fA-F]{6,32})', command)
+        if cancel_match:
+            job = await asyncio.to_thread(cancel_job_by_prefix, cancel_match.group(1))
+            if not job:
+                await api('send_group_msg', {'group_id': group_id, 'message': '📄 未找到唯一的活跃任务 ID 前缀'})
+                return
+            active = ACTIVE_TASKS.get(str(job['album_id']))
+            if active and active.get('job_id') == job['job_id']:
+                await asyncio.to_thread(cancel_download, job['album_id'])
+            await api('send_group_msg', {'group_id': group_id, 'message': f'🗑️ 已取消任务 {job["job_id"][:8]}（JM{job["album_id"]}）'})
+            return
+        if command == '检查订阅':
+            await check_subscriptions(api)
+            await api('send_group_msg', {'group_id': group_id, 'message': '✅ 已完成订阅检查（按用户设置的日报/周报节奏发送）'})
+            return
+        if command == '发送订阅摘要':
+            await check_subscriptions(api, force_digest=True)
+            await api('send_group_msg', {'group_id': group_id, 'message': '✅ 已触发订阅摘要汇总'})
+            return
+        await api('send_group_msg', {'group_id': group_id, 'message': '❓ 未识别管理命令。@我 管理 帮助 查看用法'})
+        return
+
     # 重新搜索：@机器人 + 不对/错了/重新搜 → 重跑上一次搜索
     if text.lower() in RETRY_WORDS:
         state = get_search_state(group_id, user_id)
@@ -1781,7 +2096,87 @@ async def handle_message(ws, api, msg, bot_qq):
             'group_id': group_id,
             'message': f'🔁 正在重新处理 JM{job["album_id"]}（优先使用服务器缓存）…'
         })
-        await enqueue_download(ws, api, group_id, user_id, job['album_id'], source='resend')
+        chapter_range = chapter_range_from_source(job.get('source'))
+        await enqueue_download(
+            ws, api, group_id, user_id, job['album_id'],
+            source=job['source'] if chapter_range else 'resend', chapter_range=chapter_range
+        )
+        return
+
+    # 收藏作品：可写 JM ID，或对自己的当前结果写“收藏 3”。
+    favorite_match = FAVORITE_RE.fullmatch(text)
+    if favorite_match:
+        value = favorite_match.group(1).strip()
+        result = get_result_by_index(group_id, user_id, int(value)) if value.isdigit() and len(value) <= 3 else None
+        album_id = str(result['id']) if result else extract_album_id(value)
+        if not album_id:
+            compact = re.fullmatch(r'(?:jm)?\s*(\d{5,9})', value, re.IGNORECASE)
+            album_id = compact.group(1) if compact else None
+        if not album_id:
+            await api('send_group_msg', {'group_id': group_id, 'message': '💡 用法：收藏 JM123456，或先搜索后发送「收藏 3」'})
+            return
+        label = result.get('title', '') if result else f'JM{album_id}'
+        added = await asyncio.to_thread(add_subscription, group_id, user_id, 'album', album_id, label)
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'⭐ 已收藏《{escape_cq(label)}》；首次检查只建基线，后续变更会进入摘要。'
+                       if added else '📌 这部作品已经在你的收藏里了'
+        })
+        return
+
+    author_match = SUBSCRIBE_AUTHOR_RE.fullmatch(text)
+    if author_match:
+        value = author_match.group(1).strip()
+        result = get_result_by_index(group_id, user_id, int(value)) if value.isdigit() and len(value) <= 3 else None
+        author = str(result.get('author') or '') if result else value
+        if not author:
+            await api('send_group_msg', {'group_id': group_id, 'message': '❌ 该结果没有作者信息，请直接写「订阅作者 名字」'})
+            return
+        added = await asyncio.to_thread(add_subscription, group_id, user_id, 'author', author, author)
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'🔔 已订阅作者「{escape_cq(author)}」的更新摘要' if added else '📌 该作者已经订阅'
+        })
+        return
+
+    tag_sub_match = SUBSCRIBE_TAG_RE.fullmatch(text)
+    if tag_sub_match:
+        tag_name = tag_sub_match.group(1).strip()[:50]
+        added = await asyncio.to_thread(add_subscription, group_id, user_id, 'tag', tag_name, tag_name)
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'🔔 已订阅标签「{escape_cq(tag_name)}」的更新摘要' if added else '📌 该标签已经订阅'
+        })
+        return
+
+    if text.lower() in MY_FAVORITE_WORDS:
+        subscriptions = await asyncio.to_thread(render_subscriptions, group_id, user_id)
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': '⭐ 我的收藏与订阅：\n' + subscriptions + '\n💡 发送「取消收藏 1」删除；「订阅设置 每周」调整摘要频率'
+                       if subscriptions else '⭐ 你还没有收藏或订阅。可发送「收藏 JM123456」「订阅作者 名字」「订阅标签 标签」'
+        })
+        return
+
+    unsubscribe_match = UNSUBSCRIBE_RE.fullmatch(text)
+    if unsubscribe_match:
+        removed = await asyncio.to_thread(remove_subscription_by_recent_index, group_id, user_id, int(unsubscribe_match.group(1)))
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'🗑️ 已取消{_subscription_kind_text(removed["kind"])}「{escape_cq(removed.get("label") or removed["target"])}」'
+                       if removed else '📄 没有对应的收藏/订阅编号'
+        })
+        return
+
+    setting_match = SUBSCRIPTION_SETTING_RE.fullmatch(text)
+    if setting_match:
+        cadence = 'daily' if setting_match.group(1) in {'每日', '每天'} else 'weekly'
+        updated = await asyncio.to_thread(set_subscription_cadence, group_id, user_id, cadence)
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'✅ 已将 {updated} 项订阅改为' + ('日报' if cadence == 'daily' else '周报')
+                       if updated else '📄 还没有可设置的订阅'
+        })
         return
 
     # 任务查询：@机器人 + 任务 → 查看当前处理中任务及预计剩余时间
@@ -1805,6 +2200,37 @@ async def handle_message(ws, api, msg, bot_qq):
             'group_id': group_id,
             'message': render_self_check(),
         })
+        return
+
+    # 指定章节下载：@机器人 + 下载 JM123456 第2-5章 / 最新
+    chapter_request = extract_chapter_download(text)
+    if chapter_request:
+        chapter_album_id, chapter_spec = chapter_request
+        if chapter_spec == 'latest':
+            album_data = await asyncio.to_thread(get_album_chapters, chapter_album_id)
+            if not album_data or not album_data.get('chapters'):
+                await api('send_group_msg', {
+                    'group_id': group_id,
+                    'message': f'❌ 获取漫画 {chapter_album_id} 的章节列表失败'
+                })
+                return
+            last = len(album_data['chapters'])
+            chapter_spec = (last, last)
+        if chapter_spec[1] - chapter_spec[0] > 49:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': '⚠️ 单次最多下载连续 50 章，请缩小范围后重试'
+            })
+            return
+        selector = str(chapter_spec[0]) if chapter_spec[0] == chapter_spec[1] else f'{chapter_spec[0]}-{chapter_spec[1]}'
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'📚 已选择 JM{chapter_album_id} 第 {selector} 章，准备加入下载队列…'
+        })
+        await enqueue_download(
+            ws, api, group_id, user_id, chapter_album_id,
+            source=f'chapter:{selector}', chapter_range=chapter_spec,
+        )
         return
 
     # 下载命令：@机器人 + /jm数字
@@ -1931,6 +2357,7 @@ async def handle_connection(ws):
                 pass  # 心跳忽略
 
     reader_task = asyncio.create_task(reader())
+    subscription_task = asyncio.create_task(subscription_loop(api))
 
     # 获取机器人自身QQ（用于判断是否被@）；reader 已运行，响应可被消费
     try:
@@ -1946,6 +2373,11 @@ async def handle_connection(ws):
     try:
         await reader_task
     finally:
+        subscription_task.cancel()
+        try:
+            await subscription_task
+        except asyncio.CancelledError:
+            pass
         for fut in pending.values():
             if not fut.done():
                 fut.cancel()

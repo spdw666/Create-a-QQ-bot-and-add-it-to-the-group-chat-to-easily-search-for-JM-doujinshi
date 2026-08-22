@@ -13,7 +13,7 @@ import sys
 import time
 import zipfile
 
-from jmcomic import JmOption, Feature, download_album, JmModuleConfig, JmDownloader
+from jmcomic import JmOption, Feature, download_album, download_photo, JmModuleConfig, JmDownloader
 
 # 代理配置（环境变量控制）：JM_PROXY=http://127.0.0.1:7890 走代理；留空=直连（海外服务器用）
 JM_PROXY = os.environ.get('JM_PROXY', '').strip()
@@ -52,6 +52,8 @@ IMAGE_SUFFIXES = ('.jpg', '.jpeg', '.webp', '.png', '.gif')
 # 下载并发配置（调低以减少禁漫CDN 502错误；过高的并发反而触发服务器限流）
 IMAGE_CONCURRENCY = 14   # 单本图片并发线程数（默认30，实测30并发易触发502）
 PHOTO_CONCURRENCY = 6    # 单本内章节并发数（默认32；长连载本子6章并行已足够）
+# 超过该大小时，交付阶段拆成可独立解压的 AES ZIP 分卷；0 表示关闭。
+MAX_ZIP_PART_BYTES = int(os.environ.get('JM_MAX_ZIP_PART_BYTES', str(900 * 1024 * 1024)))
 
 # 已取消下载的 album_id 集合（进程内全局；set 操作线程安全）
 CANCELLED_ALBUMS = set()
@@ -367,6 +369,23 @@ def get_album_info(album_id):
         return {'title': album.title, 'chapter_count': len(ids), 'page_count': total,
                 'author': getattr(album, 'author', '') or '',
                 'tags': getattr(album, 'tags', '') or ''}
+    except Exception:
+        return None
+
+
+def get_album_chapters(album_id):
+    """读取章节列表，供“第 N-M 章/最新”下载和预览使用。"""
+    try:
+        option = _apply_proxy(JmOption.default())
+        album = option.new_jm_client().get_album_detail(album_id)
+        chapters = []
+        for number, photo in enumerate(album, 1):
+            chapters.append({
+                'number': number,
+                'id': str(photo.id),
+                'title': str(getattr(photo, 'title', '') or f'第{number}章'),
+            })
+        return {'title': str(album.title or ''), 'chapters': chapters}
     except Exception:
         return None
 
@@ -1072,6 +1091,46 @@ def search_by_image(img_bytes):
     return res
 
 
+def _center_crop_image(img_bytes):
+    """深度识图的第二条输入：裁掉常见边框/水印区域，突出封面主体。"""
+    try:
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(img_bytes)) as image:
+            width, height = image.size
+            if width < 80 or height < 80:
+                return None
+            margin_x, margin_y = int(width * 0.08), int(height * 0.08)
+            cropped = image.crop((margin_x, margin_y, width - margin_x, height - margin_y))
+            out = BytesIO()
+            cropped.convert('RGB').save(out, format='JPEG', quality=94)
+            return out.getvalue()
+    except Exception:
+        return None
+
+
+def search_by_image_deep(img_bytes):
+    """深度识图：跳过缓存，并额外对中心裁图运行识图，合并去重候选。"""
+    raw = _search_by_image_impl(img_bytes)
+    cropped = _center_crop_image(img_bytes)
+    crop_result = _search_by_image_impl(cropped) if cropped else None
+    primary = raw or crop_result
+    if primary is None:
+        return None
+    merged, seen = [], set()
+    for result in (raw, crop_result):
+        for match in (result or {}).get('matches') or []:
+            match_id = str(match.get('id', ''))
+            if match_id and match_id not in seen:
+                seen.add(match_id)
+                merged.append(match)
+    out = dict(primary)
+    out['matches'] = merged[:8]
+    out['deep'] = True
+    out['deep_sources'] = 2 if cropped else 1
+    return out
+
+
 def _search_by_image_impl(img_bytes):
     """
     以图搜本：SauceNAO（需 JM_SAUCENAO_KEY）+ iqdb 兜底识图，用识图标题/作者去禁漫搜索匹配。
@@ -1309,7 +1368,10 @@ def cancel_download(album_id, work_dir=None):
 def cleanup_cancelled(album_id, work_dir=None):
     """下载线程停止后彻底清理取消任务的残留目录，并清除取消标记"""
     album_id = str(album_id)
+    if work_dir is None:
+        work_dir = DOWNLOAD_DIR
     shutil.rmtree(_task_dir(album_id, work_dir), ignore_errors=True)
+    shutil.rmtree(os.path.join(work_dir, 'partials', album_id), ignore_errors=True)
     CANCELLED_ALBUMS.discard(album_id)
 
 
@@ -1407,6 +1469,127 @@ def download_album_to_zip(album_id, work_dir=None):
     if not zips:
         raise FileNotFoundError(f'下载成功但未找到打包生成的ZIP文件: {task_dir}')
     return zips[0], album.title
+
+
+def _partial_task_dir(album_id, selector, work_dir=None):
+    root = work_dir or DOWNLOAD_DIR
+    return os.path.join(root, 'partials', str(album_id), selector)
+
+
+def _safe_filename(value):
+    return re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '_', str(value or '')).strip(' .')[:100] or 'untitled'
+
+
+def _write_selected_zip(image_root, zip_path):
+    """把章节下载目录中的图片打成单个 AES ZIP。"""
+    images = []
+    for root, _dirs, files in os.walk(image_root):
+        for filename in files:
+            if filename.lower().endswith(IMAGE_SUFFIXES):
+                full = os.path.join(root, filename)
+                images.append((full, os.path.relpath(full, image_root)))
+    if not images:
+        raise FileNotFoundError(f'指定章节未下载到图片: {image_root}')
+    images.sort(key=lambda item: item[1])
+    if ZIP_ENCRYPT:
+        import pyzipper
+        with pyzipper.AESZipFile(zip_path, 'w', pyzipper.ZIP_STORED) as dst:
+            dst.setencryption(pyzipper.WZ_AES, nbits=128)
+            dst.setpassword(ZIP_PASSWORD.encode())
+            for source, arcname in images:
+                dst.write(source, arcname)
+    else:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as dst:
+            for source, arcname in images:
+                dst.write(source, arcname)
+
+
+def download_album_chapters_to_zip(album_id, start, end=None, work_dir=None):
+    """下载指定章节（1-based、含首尾）并打包独立 ZIP。
+
+    章节缓存放在 downloads/partials 下，与整本缓存隔离，避免把“第 1-2 章”误当作整本。
+    """
+    end = start if end is None else end
+    start, end = int(start), int(end)
+    if start < 1 or end < start:
+        raise ValueError('章节范围无效')
+    album_data = get_album_chapters(album_id)
+    if not album_data or not album_data['chapters']:
+        raise RuntimeError('获取章节列表失败')
+    chapters = album_data['chapters']
+    if end > len(chapters):
+        raise ValueError(f'章节范围超出：本作共 {len(chapters)} 章')
+    selector = str(start) if start == end else f'{start}-{end}'
+    task_dir = _partial_task_dir(album_id, selector, work_dir)
+    os.makedirs(task_dir, exist_ok=True)
+    expected_name = f'[JM{album_id}]{_safe_filename(album_data["title"])}_第{selector}章.zip'
+    zip_path = os.path.join(task_dir, expected_name)
+    if os.path.isfile(zip_path) and zipfile.is_zipfile(zip_path):
+        return zip_path, album_data['title'], len(chapters), selector
+
+    option = _apply_proxy(JmOption.default())
+    option.dir_rule.base_dir = task_dir
+    option.download.threading.image = IMAGE_CONCURRENCY
+    option.download.threading.photo = 1
+
+    def _download_selected():
+        for chapter in chapters[start - 1:end]:
+            if str(album_id) in CANCELLED_ALBUMS:
+                raise DownloadCancelledError(f'用户取消了下载: {album_id}')
+            download_photo(chapter['id'], option, downloader=CancelableDownloader)
+        if str(album_id) in CANCELLED_ALBUMS:
+            raise DownloadCancelledError(f'用户取消了下载: {album_id}')
+        _write_selected_zip(task_dir, zip_path)
+
+    try:
+        _download_selected()
+    except DownloadCancelledError:
+        raise
+    except Exception:
+        # 删除本次不完整产物后只重试一次，保持与整本下载一致的 CDN 波动兜底。
+        shutil.rmtree(task_dir, ignore_errors=True)
+        os.makedirs(task_dir, exist_ok=True)
+        _download_selected()
+    return zip_path, album_data['title'], len(chapters), selector
+
+
+def split_zip_for_delivery(zip_path, max_bytes=None):
+    """必要时把 ZIP 拆为多个可**独立解压**的加密 ZIP；不使用不可用的字节切片分卷。"""
+    limit = MAX_ZIP_PART_BYTES if max_bytes is None else int(max_bytes)
+    if limit <= 0 or os.path.getsize(zip_path) <= limit:
+        return [zip_path]
+    base, _ext = os.path.splitext(zip_path)
+    existing = sorted(glob.glob(base + '.part*.zip'))
+    if existing and all(zipfile.is_zipfile(path) for path in existing):
+        return existing
+    for path in existing:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    import pyzipper
+    result, part_index, part_size, dst = [], 0, 0, None
+    try:
+        with pyzipper.AESZipFile(zip_path) as src:
+            src.setpassword(ZIP_PASSWORD.encode())
+            for info in src.infolist():
+                projected = part_size + max(1, info.file_size)
+                if dst is None or (part_size and projected > limit):
+                    if dst is not None:
+                        dst.close()
+                    part_index += 1
+                    part_path = f'{base}.part{part_index:02d}.zip'
+                    dst = pyzipper.AESZipFile(part_path, 'w', pyzipper.ZIP_STORED)
+                    dst.setencryption(pyzipper.WZ_AES, nbits=128)
+                    dst.setpassword(ZIP_PASSWORD.encode())
+                    result.append(part_path)
+                    part_size = 0
+                dst.writestr(info.filename, src.read(info.filename))
+                part_size += max(1, info.file_size)
+    finally:
+        if dst is not None:
+            dst.close()
+    return result or [zip_path]
 
 
 if __name__ == '__main__':

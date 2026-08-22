@@ -70,6 +70,27 @@ def test_ensure_encrypted_zip_skips_encrypted(tmp_path):
     assert is_zip_encrypted(str(z)) is True
 
 
+def test_split_zip_for_delivery_creates_independent_encrypted_parts(tmp_path):
+    """超大 ZIP 分卷后，每卷都可用同一密码独立解压。"""
+    import pyzipper
+    from jm_download import split_zip_for_delivery
+    source = tmp_path / 'source.zip'
+    with pyzipper.AESZipFile(source, 'w', pyzipper.ZIP_STORED) as zf:
+        zf.setencryption(pyzipper.WZ_AES, nbits=128)
+        zf.setpassword(TEST_PASSWORD.encode())
+        zf.writestr('a.jpg', b'a' * 12)
+        zf.writestr('b.jpg', b'b' * 12)
+        zf.writestr('c.jpg', b'c' * 12)
+    parts = split_zip_for_delivery(str(source), max_bytes=15)
+    assert len(parts) >= 2
+    merged = {}
+    for part in parts:
+        with pyzipper.AESZipFile(part) as zf:
+            zf.setpassword(TEST_PASSWORD.encode())
+            merged.update({name: zf.read(name) for name in zf.namelist()})
+    assert merged == {'a.jpg': b'a' * 12, 'b.jpg': b'b' * 12, 'c.jpg': b'c' * 12}
+
+
 def test_import_jm_niang():
     """主程序可正常导入，关键配置存在"""
     import jm_niang
@@ -170,6 +191,15 @@ def test_extract_page():
     assert extract_page('') is None
 
 
+def test_extract_chapter_download():
+    """指定章节和最新章节命令解析。"""
+    from jm_niang import extract_chapter_download
+    assert extract_chapter_download('下载 JM123456 第3章') == ('123456', (3, 3))
+    assert extract_chapter_download('下载 /jm123456 第2-5章') == ('123456', (2, 5))
+    assert extract_chapter_download('下 123456 最新') == ('123456', 'latest')
+    assert extract_chapter_download('下载 123456') is None
+
+
 def test_render_search_page():
     """翻页渲染：每页5本、全局序号、页数/总数、末页提示"""
     import jm_niang
@@ -252,6 +282,51 @@ def test_job_store_persists_personal_history(tmp_path):
         assert jm_store.get_job(queued)['status'] == 'cancelled'
     finally:
         jm_store.set_db_path(original_path)
+
+
+def test_subscription_store_persists_and_updates(tmp_path):
+    """收藏/订阅去重、频率和检查状态均落在 SQLite。"""
+    import jm_store
+    original_path = jm_store._db_path
+    jm_store.set_db_path(str(tmp_path / 'jmniang.sqlite3'))
+    try:
+        sid = jm_store.add_subscription(1, 10, 'author', '作者甲', '作者甲')
+        assert sid is not None
+        assert jm_store.add_subscription(1, 10, 'author', '作者甲', '作者甲') is None
+        assert jm_store.set_subscription_cadence(1, 10, 'daily') == 1
+        jm_store.update_subscription_state(sid, seen=[{'id': '1', 'title': '新作'}], checked=True, digested=True)
+        row = jm_store.list_subscriptions(1, 10)[0]
+        assert row['cadence'] == 'daily'
+        assert jm_store.decode_subscription_json(row['seen_json'])[0]['id'] == '1'
+        assert jm_store.remove_subscription_by_recent_index(1, 10, 1)['subscription_id'] == sid
+    finally:
+        jm_store.set_db_path(original_path)
+
+
+def test_image_confidence_and_deep_search_merge():
+    """识图候选给出解释性置信度，深度模式合并原图与裁图候选。"""
+    import jm_download
+    import jm_niang
+    result = {'source_title': '枫与铃', 'source_author': '作者甲', 'source_url': 'https://x',
+              'ocr_texts': ['枫与铃'], 'llm_words': ['枫与铃']}
+    score, reason = jm_niang.image_match_confidence(result, {'title': '枫与铃', 'author': '作者甲'})
+    assert score == 5 and '标题验证' in reason and 'OCR' in reason
+
+    original_impl, original_crop = jm_download._search_by_image_impl, jm_download._center_crop_image
+    calls = []
+    def fake_impl(data):
+        calls.append(data)
+        return {'source_title': 'T', 'source_author': '', 'source_url': '',
+                'matches': [{'id': '1', 'title': 'A', 'author': '', 'chapter_count': 1}] if data == b'raw' else
+                           [{'id': '2', 'title': 'B', 'author': '', 'chapter_count': 1}]}
+    jm_download._search_by_image_impl = fake_impl
+    jm_download._center_crop_image = lambda _data: b'crop'
+    try:
+        deep = jm_download.search_by_image_deep(b'raw')
+    finally:
+        jm_download._search_by_image_impl, jm_download._center_crop_image = original_impl, original_crop
+    assert [item['id'] for item in deep['matches']] == ['1', '2']
+    assert deep['deep'] is True and calls == [b'raw', b'crop']
 
 
 def test_handle_message_branches():

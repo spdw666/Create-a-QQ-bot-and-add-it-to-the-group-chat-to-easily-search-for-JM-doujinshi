@@ -57,6 +57,7 @@
 | 命令 Command | 说明 | Description |
 |---|---|---|
 | `@bot <漫画ID>` | 下载整本 → 加密 ZIP → 上传群文件 + 浏览器链接 | Download an album → encrypted ZIP → group files + browser link |
+| `@bot 下载 JM123456 第2-5章` / `最新` | 下载指定章节或最新章节；章节缓存与整本缓存隔离 | Download selected or latest chapters; partial caches are isolated from full-album caches |
 | `@bot <关键词/名称>` | 搜索，返回最新 5 本（含 ID），可翻页/跳页 | Search and return the latest 5 results with IDs (paginated) |
 | `@bot 作者 <作者名>` | 按作者搜索，返回 5 本（含 ID） | Search by author, return 5 results with IDs |
 | `@bot 标签 <标签名>` | 按标签搜索（人妻/百合等），返回 5 本（含 ID） | Search by tag, return 5 results with IDs |
@@ -69,6 +70,10 @@
 | `@bot 下载 <序号>` / `@bot 详情 <序号>` | 操作自己最近一次搜索、榜单或识图结果中的对应序号 | Download / preview an item from **your own** latest search, ranking, or image result |
 | `@bot 任务` | 查看正在处理的任务及预计剩余时间 | Show in-progress tasks with ETA |
 | `@bot 我的任务` / `@bot 我的下载` | 查看自己的排队任务或最近 10 条下载历史（重启后保留）；`@bot 重发 1` 重试对应记录 | Show your queued jobs or last 10 download records (survives restarts); `@bot 重发 1` retries an entry |
+| `@bot 收藏 JM123456` / `收藏 3` | 收藏作品；也可对自己当前结果的序号收藏 | Save an album, or save an item by index from your own current results |
+| `@bot 订阅作者 <名字>` / `订阅标签 <标签>` | 收藏作者/标签并按个人日报或周报接收聚合更新 | Subscribe to an author/tag and receive a per-user daily or weekly digest |
+| `@bot 我的收藏` / `取消收藏 1` | 查看或删除自己的收藏/订阅；`订阅设置 每周` 调整节奏 | List/remove subscriptions; `订阅设置 每周` changes digest cadence |
+| `@bot 管理 帮助` | 管理员诊断、暂停/恢复队列、取消任务与订阅检查（需 `JM_ADMIN_USERS`） | Admin diagnostics, queue control, task cancellation, subscription checks (requires `JM_ADMIN_USERS`) |
 | `@bot 自查` | 查看机器人运行时长与当前 QQ 连接状态 | Show bot uptime and current QQ connection status |
 | `@bot 安装包` | 发送禁漫天堂 APP 安装包（安卓 APK + 苹果描述文件，加密 ZIP 上传群文件 + 浏览器链接；也支持 `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包`） | Send the official app installer (Android APK + iOS profile, encrypted ZIP + browser link; `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包` also work) |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
@@ -83,6 +88,8 @@
 - **结果隔离**：搜索、排行榜和识图结果都按 `群 + 用户` 保存；同一群内 A 的翻页、`下载 3` 不会影响 B。
 - **公平队列**：全局默认同时下载 2 本；单个用户最多保有 2 个活跃任务（执行中或排队中），避免刷满队列。
 - **可恢复历史**：任务元数据保存在本机 SQLite `data/jmniang.sqlite3`。机器人重启后，`我的下载` 仍可查看最近记录；若 ZIP 缓存尚在，`重发 N` 会优先直接发送缓存。
+- **大文件与章节**：指定章节保存到独立缓存目录；超出 `JM_MAX_ZIP_PART_BYTES` 的交付文件会拆成多个**各自可解压**的 AES ZIP，而非不可用的字节切片。
+- **订阅摘要**：第一次检查只建立基线，不将旧内容当成新更新；后续新作品先聚合，按用户设定的日报/周报发到原群。
 - **最小化记录**：数据库只保存群号、用户号、JM ID、任务状态、标题、时间和本地缓存路径；不保存群聊正文、图片或任何凭据。`data/` 已在 `.gitignore` 中，绝不提交。
 
 *Results are isolated by group and user; the global queue is fair; task history persists locally in SQLite and never stores message text, images, or credentials.*
@@ -259,6 +266,9 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_LLM_MODEL` | ❌ | 识图视觉模型（可选；默认 Qwen/Qwen3-VL-8B-Instruct 免费档；付费可配 Qwen/Qwen3-VL-30B-A3B-Instruct，更快更准）。Optional vision model for image search (default free Qwen/Qwen3-VL-8B-Instruct; paid Qwen/Qwen3-VL-30B-A3B-Instruct is faster & better). |
 | `JM_AGENTKEY_KEY` | ❌ | AgentKey API key（https://console.agentkey.app/ 获取；ascii2d 直连被反爬时自动经 AgentKey/Firecrawl 浏览器渲染中转，绕过数据中心 IP 封锁）。Optional AgentKey API key; when ascii2d direct access is blocked, the bot falls back to an AgentKey/Firecrawl browser-rendered relay that bypasses datacenter-IP blocks. |
 | `JM_NEW_IMAGE_SOURCES` | ❌ | 启用 ascii2d / Yandex 新识图源（默认空=关；ascii2d 直连被反爬时自动经 AgentKey/Firecrawl 中转，配 `JM_AGENTKEY_KEY` 即可生效；Yandex 仍需代理）。Enable ascii2d/Yandex sources (empty=off; ascii2d falls back to AgentKey/Firecrawl relay when blocked — just set `JM_AGENTKEY_KEY`; Yandex still needs a proxy). |
+| `JM_MAX_ZIP_PART_BYTES` | ❌ | 每个可独立解压 ZIP 分卷的最大字节数；默认 900MiB，设 `0` 关闭自动分卷。Maximum bytes per independently extractable ZIP part; default 900MiB, `0` disables splitting. |
+| `JM_ADMIN_USERS` | ❌ | 可使用管理命令的 QQ 号，英文逗号分隔；默认空，安全地禁用管理入口。Admin QQ IDs, comma-separated; empty safely disables admin commands. |
+| `JM_SUBSCRIPTION_CHECK_SECONDS` | ❌ | 订阅检查间隔秒数（默认 3600）；真正发送仍按用户日报/周报。Subscription polling interval (default 3600); actual delivery still follows daily/weekly cadence. |
 
 ## 运维 Operations
 
@@ -297,7 +307,7 @@ python deploy.py jm_niang.py
 python -m pytest test_jm_download.py
 ```
 
-当前 **34 项全绿**（需 `JM_ZIP_PASSWORD` 环境变量）。覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页/跳页渲染、消息层全命令路由、个人结果隔离、SQLite 任务历史、识图/取消等（全部离线，无需联网）。 · **34 tests, all green** (requires `JM_ZIP_PASSWORD`). Covers ZIP encryption, CQ escaping, search variants, pagination, message routing, per-user result isolation, SQLite task history, image search and cancellation (offline).
+当前 **40 项全绿**（需 `JM_ZIP_PASSWORD` 环境变量）。覆盖：ZIP 加密与独立分卷、CQ 转义、搜索变体、章节命令、个人结果隔离、SQLite 任务/订阅历史、识图置信度与深度复核、取消等（全部离线，无需联网）。 · **40 tests, all green** (requires `JM_ZIP_PASSWORD`). Covers ZIP encryption and independent parts, CQ escaping, search variants, chapter commands, per-user state, SQLite task/subscription history, image confidence/deep review and cancellation (offline).
 
 Covers ZIP encryption, CQ escaping, search-variant generation, author command parsing, pagination/jump rendering and message-layer command routing (all offline).
 
@@ -348,9 +358,9 @@ A：在群里邀请机器人 QQ 号即可——它会自动同意邀请并进群
 ```
 jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处理、上传、翻页/跳页、自动同意邀请
                      # QQ bot main loop: OneBot WS client, command handling, uploads, pagination, auto-accept invites
-jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索（四层变体）、以图搜本（OCR→引擎→LLM 结构化正向搜索+缓存）
+jm_download.py       # jmcomic 封装：整本/指定章节→AES ZIP/独立分卷、智能搜索、以图搜本（含深度裁图复核）
                      # jmcomic wrapper: download → AES ZIP, smart CJK search, image search (OCR→engines→LLM forward search + cache)
-jm_store.py          # SQLite 任务记录：个人任务/下载历史、取消与公平队列计数（不存消息正文或凭据）
+jm_store.py          # SQLite：个人任务/下载历史、订阅基线/摘要、取消与公平队列计数（不存消息正文或凭据）
                      # SQLite task store: personal task/history, cancellation and fair-queue counts (no message bodies or secrets)
 maintain_reply.py    # 维护应答器：升级窗口内代答"正在升级中"（deploy.py 自动拉起/关闭）
                      # maintenance replier: answers @mentions with "upgrading" during deploy windows
@@ -360,7 +370,7 @@ napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉
                      # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (absolute /usr/sbin/ss path)
 qq_official_bot.py   # 官方机器人接入（已停用备用）：真·按钮需官方机器人，群权限卡点后放弃，代码保留
                      # official bot integration (disabled, kept for reference): real buttons need official bot; dropped after group-permission blocker
-test_jm_download.py  # 离线单元测试（34 项全绿）· offline unit tests (34 green)
+test_jm_download.py  # 离线单元测试（40 项全绿）· offline unit tests (40 green)
 test_qq_official_bot.py # 官方机器人单元测试 · official-bot unit tests
 requirements.txt     # 依赖清单 · dependency list
 docs/qq-crash-issue.md # 掉线/崩溃问题完整技术档案（真相大白归档）· full crash/outage investigation archive
@@ -380,6 +390,7 @@ start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
 | 08-20 | 识图 ascii2d+Yandex 新源（代码保留；服务器 DC IP 反爬，配代理后可启用） |
 | 08-21 | 识图增强：LLM 结构化正向搜索 + 图片结果缓存 + OCR 水印过滤 + 视觉模型可配（Qwen3-VL-30B-A3B） |
 | 08-22 | 个人状态底座：搜索/识图结果按群成员隔离；SQLite 任务历史、缓存重发、个人取消与单用户公平队列上线 |
+| 08-22 | 路线 7.2–7.5：指定章节、独立 AES 分卷、识图置信度/深度复核、收藏订阅摘要、管理员队列与诊断上线 |
 
 *Initial release (08-13): download → AES ZIP → group files + link; 4-layer CJK search, pagination, author/tag/ranking, random, fortune, image search (OCR→SauceNAO/iQDB→Qwen3-VL). Stability (08-14): watchdog v6 fix, anti-detection, zero-downtime deploys, auto-accept invites. (08-15): weak-password brute-force found → `jm321`; installer feature. (08-17): mention-free button menu; official-bot buttons dropped. (08-19): cancel race fixes; percentage-threshold progress. (08-20): ascii2d/Yandex sources kept in code (datacenter IP blocked, enable with proxy). (08-21): LLM structured forward search + image cache + OCR watermark filter + configurable vision model (Qwen3-VL-30B-A3B).*
 
