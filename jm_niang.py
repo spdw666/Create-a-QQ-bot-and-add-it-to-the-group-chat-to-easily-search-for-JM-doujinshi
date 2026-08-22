@@ -16,6 +16,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import sys
 import time
 import uuid
@@ -756,19 +757,76 @@ def _parse_etime(t):
         return None
 
 
+def _self_check_cache_stats():
+    """统计本地下载/分享缓存；只读元数据，不打开 ZIP 内容。"""
+    zip_count, zip_bytes, share_count, share_bytes = 0, 0, 0, 0
+    for root, _dirs, files in os.walk(DOWNLOAD_DIR):
+        for filename in files:
+            if filename.lower().endswith('.zip'):
+                try:
+                    zip_count += 1
+                    zip_bytes += os.path.getsize(os.path.join(root, filename))
+                except OSError:
+                    pass
+    for root, _dirs, files in os.walk(SHARE_DIR):
+        for filename in files:
+            try:
+                share_count += 1
+                share_bytes += os.path.getsize(os.path.join(root, filename))
+            except OSError:
+                pass
+    return zip_count, zip_bytes, share_count, share_bytes
+
+
+def _self_check_dns():
+    try:
+        socket.getaddrinfo('18comic.vip', 443, type=socket.SOCK_STREAM)
+        return True
+    except OSError:
+        return False
+
+
+def _self_check_napcat_port():
+    try:
+        with socket.create_connection((WS_HOST, WS_PORT), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
 def render_self_check():
-    """自查报告：进程启动时刻/运行时长 + 当前 NapCat 连接时长 + QQ 进程真实存活（部署不重置）"""
+    """一次性汇总进程、NapCat、网络、下载、识图、缓存与持久化状态；绝不显示凭据。"""
     start_txt = datetime.datetime.fromtimestamp(START_TIME).strftime('%m-%d %H:%M:%S')
-    lines = [f'🤖 自查报告：',
-             f'· 机器人进程：自 {start_txt} 启动，已运行 {_fmt_duration(time.time() - START_TIME)}']
+    lines = [f'🤖 JM娘综合自查',
+             f'【进程】自 {start_txt} 启动，已运行 {_fmt_duration(time.time() - START_TIME)}']
     if CUR_CONN_TIME:
         conn_txt = datetime.datetime.fromtimestamp(CUR_CONN_TIME).strftime('%m-%d %H:%M:%S')
-        lines.append(f'· 当前QQ连接：自 {conn_txt} 建立，已在线 {_fmt_duration(time.time() - CUR_CONN_TIME)}')
+        napcat = f'已连接（自 {conn_txt} 起 {_fmt_duration(time.time() - CUR_CONN_TIME)}）'
     else:
-        lines.append('· 当前QQ连接：尚未建立')
+        napcat = '机器人尚未建立 WS 连接'
+    lines.append(f'【NapCat】{napcat}；8081 端口 {"可达" if _self_check_napcat_port() else "不可达"}')
     secs = _parse_etime(_qq_process_etime() or '')
     if secs is not None:
-        lines.append(f'· QQ进程存活：{_fmt_duration(secs)}（未被重启）')
+        lines.append(f'【QQ】进程已存活 {_fmt_duration(secs)}')
+    lines.append(f'【网络】禁漫域名 DNS {"正常" if _self_check_dns() else "失败"}；本机 WS 仅检测，不发起下载请求')
+    usage = shutil.disk_usage(BASE_DIR)
+    lines.append(f'【下载】队列 {"暂停" if QUEUE_PAUSED else "运行"}；活跃 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}；磁盘可用 {format_bytes(usage.free)}')
+    image_sources = ['OCR/iQDB']
+    if os.environ.get('JM_SAUCENAO_KEY'):
+        image_sources.append('SauceNAO')
+    if os.environ.get('JM_LLM_KEY'):
+        image_sources.append('视觉 LLM')
+    if os.environ.get('JM_AGENTKEY_KEY'):
+        image_sources.append('AgentKey 中转')
+    lines.append('【识图】可用链路：' + '、'.join(image_sources) + '；支持置信度与“都不对”深度复核')
+    zip_count, zip_bytes, share_count, share_bytes = _self_check_cache_stats()
+    lines.append(f'【缓存】下载 ZIP {zip_count} 个 / {format_bytes(zip_bytes)}；分享文件 {share_count} 个 / {format_bytes(share_bytes)}')
+    try:
+        stats = get_store_stats()
+        lines.append(f'【记录】任务 {stats.get("jobs", {})}；订阅 {stats.get("subscriptions", 0)} 项')
+    except Exception:
+        lines.append('【记录】SQLite 状态暂不可读')
+    lines.append('✅ 自查不显示密码、密钥、Cookie 或聊天内容')
     return '\n'.join(lines)
 
 

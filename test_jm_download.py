@@ -384,7 +384,9 @@ def test_handle_message_branches():
     assert len(sent) == 1 and '使用说明' in sent[0][1]['message']
     # 1b. 自查：报告进程运行时长与连接状态
     run('自查')
-    assert len(sent) == 1 and '自查报告' in sent[0][1]['message'] and '机器人进程' in sent[0][1]['message']
+    selfcheck = sent[0][1]['message']
+    assert len(sent) == 1 and '综合自查' in selfcheck and '【NapCat】' in selfcheck
+    assert '【网络】' in selfcheck and '【下载】' in selfcheck and '【识图】' in selfcheck and '【缓存】' in selfcheck
     # 2. 关键词搜索：12本 → 第1页 + 翻页提示 + 状态缓存
     jm_niang.search_album = lambda kw, n=5: [{'title': f'本{i}', 'chapter_count': 1,
                                               'id': str(100000 + i), 'author': 'a'}
@@ -594,7 +596,7 @@ def test_handle_message_branches():
     assert ('当前任务' in sent[-1][1]['message'] or '没有正在处理' in sent[-1][1]['message'])
     # 11f. 免@按钮：直接发「自查」触发
     run_no_at('自查')
-    assert '自查报告' in sent[-1][1]['message']
+    assert '综合自查' in sent[-1][1]['message'] and '【缓存】' in sent[-1][1]['message']
     # 11g. 免@按钮：直接发「说明」触发
     run_no_at('说明')
     assert '使用说明' in sent[-1][1]['message']

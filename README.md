@@ -74,7 +74,7 @@
 | `@bot 订阅作者 <名字>` / `订阅标签 <标签>` | 收藏作者/标签并按个人日报或周报接收聚合更新 | Subscribe to an author/tag and receive a per-user daily or weekly digest |
 | `@bot 我的收藏` / `取消收藏 1` | 查看或删除自己的收藏/订阅；`订阅设置 每周` 调整节奏 | List/remove subscriptions; `订阅设置 每周` changes digest cadence |
 | `@bot 管理 帮助` | 管理员诊断、暂停/恢复队列、取消任务与订阅检查（需 `JM_ADMIN_USERS`） | Admin diagnostics, queue control, task cancellation, subscription checks (requires `JM_ADMIN_USERS`) |
-| `@bot 自查` | 查看机器人运行时长与当前 QQ 连接状态 | Show bot uptime and current QQ connection status |
+| `@bot 自查` | 一次汇总进程、NapCat/QQ、DNS、下载队列/磁盘、识图链路、缓存与 SQLite 状态；不显示凭据 | One report for process, NapCat/QQ, DNS, queue/disk, image pipeline, cache and SQLite state; never exposes credentials |
 | `@bot 安装包` | 发送禁漫天堂 APP 安装包（安卓 APK + 苹果描述文件，加密 ZIP 上传群文件 + 浏览器链接；也支持 `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包`） | Send the official app installer (Android APK + iOS profile, encrypted ZIP + browser link; `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包` also work) |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
 | `@bot 不对` | 重新搜索上一次的结果（含识图重搜） | Re-run the last search (image search included) |
