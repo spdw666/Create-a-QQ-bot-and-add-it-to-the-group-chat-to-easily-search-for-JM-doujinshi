@@ -126,6 +126,47 @@ def list_jobs(group_id, user_id, limit=10):
     return [dict(row) for row in rows]
 
 
+def count_active_jobs(group_id, user_id):
+    """返回该用户处于排队或执行中的任务数。"""
+    with _connect() as conn:
+        _init(conn)
+        row = conn.execute(
+            '''SELECT COUNT(*) AS count FROM download_jobs
+               WHERE group_id = ? AND user_id = ? AND status IN ('queued', 'running')''',
+            (str(group_id), str(user_id)),
+        ).fetchone()
+    return int(row['count'])
+
+
+def get_job(job_id):
+    """按内部任务 ID 读取任务；不存在时返回 None。"""
+    with _connect() as conn:
+        _init(conn)
+        row = conn.execute('SELECT * FROM download_jobs WHERE job_id = ?', (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def cancel_latest_active_job(group_id, user_id):
+    """取消该用户最新的排队/执行任务，并返回取消前的记录。"""
+    now = int(time.time())
+    with _connect() as conn:
+        _init(conn)
+        row = conn.execute(
+            '''SELECT * FROM download_jobs
+               WHERE group_id = ? AND user_id = ? AND status IN ('queued', 'running')
+               ORDER BY created_at DESC LIMIT 1''',
+            (str(group_id), str(user_id)),
+        ).fetchone()
+        if not row:
+            return None
+        job = dict(row)
+        conn.execute(
+            "UPDATE download_jobs SET status = 'cancelled', error = '用户取消', finished_at = ? WHERE job_id = ?",
+            (now, job['job_id']),
+        )
+    return job
+
+
 def get_job_by_recent_index(group_id, user_id, index):
     """获取“我的下载”显示的第 index 条记录（1-based）。"""
     if index < 1:

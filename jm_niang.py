@@ -23,7 +23,15 @@ import datetime
 
 import websockets
 
-from jm_store import create_job, get_job_by_recent_index, list_jobs, update_job
+from jm_store import (
+    cancel_latest_active_job,
+    count_active_jobs,
+    create_job,
+    get_job,
+    get_job_by_recent_index,
+    list_jobs,
+    update_job,
+)
 
 from jm_download import (
     download_album_to_zip,
@@ -65,6 +73,8 @@ MAX_CONCURRENT_DOWNLOADS = 2
 SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 DOWNLOAD_QUEUE = 0  # 当前排队等待的任务数（排队位置提示用）
 ACTIVE_TASKS = {}  # 正在处理的任务状态：album_id -> {phase, done, total}（排队告知用）
+# 单个用户至多一项执行中和一项等待任务，避免一个人占满全局下载槽位。
+MAX_ACTIVE_JOBS_PER_USER = 2
 
 # ---------- HTTP 下载链接分享配置 ----------
 # 服务器公网IP与HTTP服务端口（腾讯云轻量控制台需放行该端口）
@@ -737,6 +747,8 @@ def render_personal_jobs(group_id, user_id, active_only=False):
         detail = f'{index}. {_job_status_text(job["status"])} · 《{title}》\n   🔢 ID：{job["album_id"]}'
         if job.get('total_pages'):
             detail += f' · {job["total_pages"]} 页'
+        if job['status'] == 'completed' and job.get('zip_path') and os.path.isfile(job['zip_path']):
+            detail += ' · 缓存可重发'
         if job.get('error') and job['status'] == 'failed':
             detail += f' · {escape_cq(job["error"][:60])}'
         lines.append(detail)
@@ -888,7 +900,10 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
                                     error='相同漫画正在处理中', finished=True)
         return
     ACTIVE_DOWNLOADS.append(album_id)  # 立即占位，消除并发窗口（防双任务双份进度）
-    ACTIVE_TASKS[album_id] = {'phase': '准备中', 'done': 0, 'total': 0}  # 排队告知用
+    ACTIVE_TASKS[album_id] = {
+        'phase': '准备中', 'done': 0, 'total': 0,
+        'group_id': str(group_id), 'user_id': str(user_id), 'job_id': job_id or '',
+    }  # 排队告知用
     if job_id:
         await asyncio.to_thread(update_job, job_id, status='running', started=True)
     try:
@@ -1080,6 +1095,14 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
 async def enqueue_download(ws, api, group_id, user_id, album_id, source='id'):
     """登记个人任务后进入现有全局并发队列。"""
     global DOWNLOAD_QUEUE
+    active_count = await asyncio.to_thread(count_active_jobs, group_id, user_id)
+    if active_count >= MAX_ACTIVE_JOBS_PER_USER:
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'⏳ 你已有 {active_count} 个下载任务在处理中/排队中。'
+                       '请等待完成，或 @我「取消」后再提交。'
+        })
+        return
     job_id = await asyncio.to_thread(create_job, group_id, user_id, album_id, source)
     DOWNLOAD_QUEUE += 1
     try:
@@ -1093,6 +1116,9 @@ async def enqueue_download(ws, api, group_id, user_id, album_id, source='id'):
             await api('send_group_msg', {'group_id': group_id, 'message': msg})
 
         async with SEMAPHORE:
+            job = await asyncio.to_thread(get_job, job_id)
+            if not job or job.get('status') == 'cancelled':
+                return  # 在排队期间被“取消”命令撤销
             await handle_jm_request(ws, api, group_id, user_id, album_id, job_id)
     finally:
         DOWNLOAD_QUEUE -= 1
@@ -1420,17 +1446,24 @@ async def handle_message(ws, api, msg, bot_qq):
 
     # 取消命令：@机器人 + 取消/停止 等
     if text.lower() in CANCEL_WORDS:
-        if ACTIVE_DOWNLOADS:
-            target = ACTIVE_DOWNLOADS[-1]  # 取消最近开始的任务
+        job = await asyncio.to_thread(cancel_latest_active_job, group_id, user_id)
+        if job:
+            target = str(job['album_id'])
+            active = ACTIVE_TASKS.get(target)
+            is_running = bool(active and active.get('job_id') == job['job_id'])
+            if is_running:
+                await asyncio.to_thread(cancel_download, target)
+                message = f'🛑 正在取消下载 {target}，已下载的缓存将一并清除…'
+            else:
+                message = f'🗑️ 已取消排队任务 {target}'
             await api('send_group_msg', {
                 'group_id': group_id,
-                'message': f'🛑 正在取消下载 {target}，已下载的缓存将一并清除…'
+                'message': message
             })
-            await asyncio.to_thread(cancel_download, target)
         else:
             await api('send_group_msg', {
                 'group_id': group_id,
-                'message': '✅ 当前没有正在下载的任务'
+                'message': '✅ 你当前没有正在下载或排队的任务'
             })
         return
 

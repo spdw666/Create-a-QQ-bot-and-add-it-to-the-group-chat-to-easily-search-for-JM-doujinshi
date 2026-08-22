@@ -28,6 +28,7 @@
 
 - [简介 Introduction](#简介-introduction)
 - [功能 Features](#功能-features)
+- [任务状态与数据 Task state & data](#任务状态与数据-task-state--data)
 - [效果示例 Demo](#效果示例-demo)
 - [亮点 Highlights](#亮点-highlights)
 - [架构 Architecture](#架构-architecture)
@@ -40,11 +41,12 @@
 - [常见问题 FAQ](#常见问题-faq)
 - [项目结构 Project layout](#项目结构-project-layout)
 - [更新日志 Changelog](#更新日志-changelog)
+- [路线图 Roadmap](docs/roadmap.md)
 - [License](#license)
 
 ## 简介 Introduction
 
-**JM娘** 是一个 Python QQ 群机器人。群成员在群里 `@机器人` 即可搜索、下载 [jmcomic](https://github.com/tonquer/jmcomic) 支持的漫画本子——输入 ID 下载整本，输入关键词/名称/作者搜索，机器人自动打包加密 ZIP 上传群文件并附带浏览器下载链接。
+**JM娘** 是一个 Python QQ 群机器人。群成员在群里 `@机器人` 即可搜索、下载 [jmcomic](https://github.com/tonquer/jmcomic) 支持的漫画本子——输入 ID 下载整本，输入关键词/名称/作者搜索，机器人自动打包加密 ZIP 上传群文件并附带浏览器下载链接。搜索结果、任务和下载记录均按群成员隔离。
 
 **JM娘** is a Python QQ group bot. Group members just `@mention` the bot to search and download doujinshi from [jmcomic](https://github.com/tonquer/jmcomic)-supported sources — send an album ID to download it, or a keyword / title / author to search. The bot packs the album into an encrypted ZIP, uploads it to group files, and attaches a browser download link.
 
@@ -71,10 +73,19 @@
 | `@bot 安装包` | 发送禁漫天堂 APP 安装包（安卓 APK + 苹果描述文件，加密 ZIP 上传群文件 + 浏览器链接；也支持 `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包`） | Send the official app installer (Android APK + iOS profile, encrypted ZIP + browser link; `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包` also work) |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
 | `@bot 不对` | 重新搜索上一次的结果（含识图重搜） | Re-run the last search (image search included) |
-| `@bot 取消` | 取消正在进行的下载 | Cancel the in-progress download |
+| `@bot 取消` | 取消**自己**最近的下载或排队任务，不影响其他群成员 | Cancel **your own** latest download or queued job; never affects another member |
 | `@bot 说明` | 查看使用说明 | Show the help text |
 | `@bot 菜单` / `@bot 按钮` | 返回按钮式命令面板（`@bot 菜单`/`@bot 按钮`/`@bot 面板`） | Show the button-style command panel |
 | **免@按钮**（无需@） | 直接发「随机」「今日属性」「日榜」「周榜」「月榜」「安装包」「任务」「自查」「说明」即可触发对应功能，等同点按钮 | **Button words** (no mention needed): just send `随机` / `今日属性` / `日榜` / `周榜` / `月榜` / `安装包` / `任务` / `自查` / `说明` directly to trigger the same action |
+
+## 任务状态与数据 Task state & data
+
+- **结果隔离**：搜索、排行榜和识图结果都按 `群 + 用户` 保存；同一群内 A 的翻页、`下载 3` 不会影响 B。
+- **公平队列**：全局默认同时下载 2 本；单个用户最多保有 2 个活跃任务（执行中或排队中），避免刷满队列。
+- **可恢复历史**：任务元数据保存在本机 SQLite `data/jmniang.sqlite3`。机器人重启后，`我的下载` 仍可查看最近记录；若 ZIP 缓存尚在，`重发 N` 会优先直接发送缓存。
+- **最小化记录**：数据库只保存群号、用户号、JM ID、任务状态、标题、时间和本地缓存路径；不保存群聊正文、图片或任何凭据。`data/` 已在 `.gitignore` 中，绝不提交。
+
+*Results are isolated by group and user; the global queue is fair; task history persists locally in SQLite and never stores message text, images, or credentials.*
 
 ## 效果示例 Demo
 
@@ -141,6 +152,7 @@ QQ group chat ── OneBot v11 (WebSocket) ──► NapCat ──► JM bot (P
                                                             │
                               upload_group_file ──► QQ group files
                               publish token URL  ──► http.server :8080
+                              task metadata      ──► SQLite (data/jmniang.sqlite3)
 ```
 
 ## 快速开始 Quick Start
@@ -285,7 +297,7 @@ python deploy.py jm_niang.py
 python -m pytest test_jm_download.py
 ```
 
-当前 **32 项全绿**（需 `JM_ZIP_PASSWORD` 环境变量）。覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页/跳页渲染、消息层全命令路由、识图/取消等（全部离线，无需联网）。 · **32 tests, all green** (requires `JM_ZIP_PASSWORD`). Covers ZIP encryption, CQ escaping, search-variant generation, author parsing, pagination/jump rendering, message-layer routing, image search & cancellation (offline).
+当前 **34 项全绿**（需 `JM_ZIP_PASSWORD` 环境变量）。覆盖：ZIP 加密、CQ 转义、搜索变体生成、作者命令解析、翻页/跳页渲染、消息层全命令路由、个人结果隔离、SQLite 任务历史、识图/取消等（全部离线，无需联网）。 · **34 tests, all green** (requires `JM_ZIP_PASSWORD`). Covers ZIP encryption, CQ escaping, search variants, pagination, message routing, per-user result isolation, SQLite task history, image search and cancellation (offline).
 
 Covers ZIP encryption, CQ escaping, search-variant generation, author command parsing, pagination/jump rendering and message-layer command routing (all offline).
 
@@ -338,6 +350,8 @@ jm_niang.py          # QQ 机器人主循环：OneBot WS 客户端、命令处�
                      # QQ bot main loop: OneBot WS client, command handling, uploads, pagination, auto-accept invites
 jm_download.py       # jmcomic 封装：下载→AES ZIP、智能搜索（四层变体）、以图搜本（OCR→引擎→LLM 结构化正向搜索+缓存）
                      # jmcomic wrapper: download → AES ZIP, smart CJK search, image search (OCR→engines→LLM forward search + cache)
+jm_store.py          # SQLite 任务记录：个人任务/下载历史、取消与公平队列计数（不存消息正文或凭据）
+                     # SQLite task store: personal task/history, cancellation and fair-queue counts (no message bodies or secrets)
 maintain_reply.py    # 维护应答器：升级窗口内代答"正在升级中"（deploy.py 自动拉起/关闭）
                      # maintenance replier: answers @mentions with "upgrading" during deploy windows
 deploy.py            # 无感部署脚本：应答器→停机→上传→恢复→清理，失败自动回滚
@@ -346,7 +360,7 @@ napcat_watchdog.sh   # NapCat 看门狗：每分钟检测 8081，掉线自动拉
                      # NapCat watchdog: polls port 8081 every minute, relaunches QQ on crash (absolute /usr/sbin/ss path)
 qq_official_bot.py   # 官方机器人接入（已停用备用）：真·按钮需官方机器人，群权限卡点后放弃，代码保留
                      # official bot integration (disabled, kept for reference): real buttons need official bot; dropped after group-permission blocker
-test_jm_download.py  # 离线单元测试（32 项全绿）· offline unit tests (32 green)
+test_jm_download.py  # 离线单元测试（34 项全绿）· offline unit tests (34 green)
 test_qq_official_bot.py # 官方机器人单元测试 · official-bot unit tests
 requirements.txt     # 依赖清单 · dependency list
 docs/qq-crash-issue.md # 掉线/崩溃问题完整技术档案（真相大白归档）· full crash/outage investigation archive
@@ -365,6 +379,7 @@ start_jmniang.bat    # 可选 Windows 启动脚本 · optional Windows launcher
 | 08-19 | 取消/下载竞态修复；进度条改百分比阈值（全程约 7 条不刷屏） |
 | 08-20 | 识图 ascii2d+Yandex 新源（代码保留；服务器 DC IP 反爬，配代理后可启用） |
 | 08-21 | 识图增强：LLM 结构化正向搜索 + 图片结果缓存 + OCR 水印过滤 + 视觉模型可配（Qwen3-VL-30B-A3B） |
+| 08-22 | 个人状态底座：搜索/识图结果按群成员隔离；SQLite 任务历史、缓存重发、个人取消与单用户公平队列上线 |
 
 *Initial release (08-13): download → AES ZIP → group files + link; 4-layer CJK search, pagination, author/tag/ranking, random, fortune, image search (OCR→SauceNAO/iQDB→Qwen3-VL). Stability (08-14): watchdog v6 fix, anti-detection, zero-downtime deploys, auto-accept invites. (08-15): weak-password brute-force found → `jm321`; installer feature. (08-17): mention-free button menu; official-bot buttons dropped. (08-19): cancel race fixes; percentage-threshold progress. (08-20): ascii2d/Yandex sources kept in code (datacenter IP blocked, enable with proxy). (08-21): LLM structured forward search + image cache + OCR watermark filter + configurable vision model (Qwen3-VL-30B-A3B).*
 

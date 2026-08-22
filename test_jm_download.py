@@ -244,6 +244,12 @@ def test_job_store_persists_personal_history(tmp_path):
         assert jobs_a[0]['status'] == 'completed'
         assert jm_store.get_job_by_recent_index(1, 10, 1)['title'] == '测试本'
         assert jm_store.get_job_by_recent_index(1, 10, 2) is None
+        queued = jm_store.create_job(1, 10, '100002')
+        assert jm_store.count_active_jobs(1, 10) == 1
+        cancelled = jm_store.cancel_latest_active_job(1, 10)
+        assert cancelled['job_id'] == queued and cancelled['album_id'] == '100002'
+        assert jm_store.count_active_jobs(1, 10) == 0
+        assert jm_store.get_job(queued)['status'] == 'cancelled'
     finally:
         jm_store.set_db_path(original_path)
 
