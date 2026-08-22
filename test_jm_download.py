@@ -189,6 +189,65 @@ def test_render_search_page():
     assert '下一页' not in p3
 
 
+def test_personal_search_state_and_result_actions():
+    """同群用户搜索隔离；“下载 2”只操作该用户的第 2 条结果。"""
+    import asyncio
+    import jm_niang
+
+    group = 12345
+    user_a, user_b = 101, 202
+    jm_niang.SEARCH_STATE.clear()
+    jm_niang.set_search_state(group, user_a, {
+        'head': 'A', 'kind': 'search', 'keyword': 'a', 'page': 1, 'ts': __import__('time').time(),
+        'results': [{'id': '111111', 'title': 'A1', 'chapter_count': 1},
+                    {'id': '111112', 'title': 'A2', 'chapter_count': 1}],
+    })
+    jm_niang.set_search_state(group, user_b, {
+        'head': 'B', 'kind': 'search', 'keyword': 'b', 'page': 1, 'ts': __import__('time').time(),
+        'results': [{'id': '222221', 'title': 'B1', 'chapter_count': 1}],
+    })
+    assert jm_niang.get_result_by_index(group, user_a, 2)['id'] == '111112'
+    assert jm_niang.get_result_by_index(group, user_b, 1)['id'] == '222221'
+    assert jm_niang.extract_result_action('下载 2') == ('下载', 2)
+    assert jm_niang.extract_result_action('详情 123456') is None
+
+    calls, sent = [], []
+    async def fake_enqueue(ws, api, gid, uid, album_id, source='id'):
+        calls.append((gid, uid, album_id, source))
+    async def fake_api(action, params=None, timeout=60):
+        sent.append((action, params))
+        return {'retcode': 0}
+    original = jm_niang.enqueue_download
+    jm_niang.enqueue_download = fake_enqueue
+    try:
+        msg = {'post_type': 'message', 'message_type': 'group', 'group_id': group, 'user_id': user_a,
+               'message': [{'type': 'at', 'data': {'qq': 'bot'}},
+                           {'type': 'text', 'data': {'text': '下载 2'}}]}
+        asyncio.run(jm_niang.handle_message(None, fake_api, msg, 'bot'))
+    finally:
+        jm_niang.enqueue_download = original
+    assert calls == [(group, user_a, '111112', 'result')]
+    assert sent == []
+
+
+def test_job_store_persists_personal_history(tmp_path):
+    """任务记录按群和用户隔离，并能读取最近一条。"""
+    import jm_store
+    original_path = jm_store._db_path
+    jm_store.set_db_path(str(tmp_path / 'jmniang.sqlite3'))
+    try:
+        job_a = jm_store.create_job(1, 10, '100001')
+        jm_store.update_job(job_a, status='completed', title='测试本', total_pages=12, finished=True)
+        jm_store.create_job(1, 20, '200001')
+        jobs_a = jm_store.list_jobs(1, 10)
+        assert len(jobs_a) == 1 and jobs_a[0]['album_id'] == '100001'
+        assert jobs_a[0]['status'] == 'completed'
+        assert jm_store.get_job_by_recent_index(1, 10, 1)['title'] == '测试本'
+        assert jm_store.get_job_by_recent_index(1, 10, 2) is None
+    finally:
+        jm_store.set_db_path(original_path)
+
+
 def test_handle_message_branches():
     """消息层端到端：mock 群消息事件与 API，验证各命令路由与回复内容"""
     import asyncio
@@ -252,7 +311,8 @@ def test_handle_message_branches():
     run('人妻')
     joined = '\n'.join(p['message'] for _, p in sent)
     assert '第 1/3 页' in joined and '共 12 本' in joined and '下一页' in joined
-    assert SEARCH_STATE.get(GROUP) is not None
+    state_key = (str(GROUP), '999')
+    assert SEARCH_STATE.get(state_key) is not None
     # 3. 翻页：下一页 → 第2页（全局序号6-10）
     run('下一页')
     m2 = sent[0][1]['message']
@@ -265,14 +325,14 @@ def test_handle_message_branches():
     run_no_at('翻页')
     assert '最后一页' in sent[0][1]['message']
     # 3d. 免@无状态时静默（普通聊天出现「下一页」不打扰）
-    SEARCH_STATE.pop(GROUP, None)
+    SEARCH_STATE.pop(state_key, None)
     run_no_at('下一页')
     assert sent == []
     # 3e. 免@时其他文本不响应（聊天内容不触发）
     run_no_at('今天天气不错')
     assert sent == []
     # 3f. 跳页：@机器人 第3页 → 直达第3页
-    SEARCH_STATE[GROUP] = {'head': '🔍 关键词「人妻」',
+    SEARCH_STATE[state_key] = {'head': '🔍 关键词「人妻」',
                            'results': [{'title': f'本{i}', 'chapter_count': 1,
                                         'id': str(100000 + i), 'author': 'a'}
                                        for i in range(12)],
@@ -291,7 +351,7 @@ def test_handle_message_branches():
     # 3i. 聊天里「你看第3页」不是跳转命令
     run_no_at('你看第3页')
     assert sent == []
-    SEARCH_STATE.pop(GROUP, None)
+    SEARCH_STATE.pop(state_key, None)
     # 4. 作者搜索
     jm_niang.search_author_album = lambda a, n=5: [{'title': f'{a}本{i}', 'chapter_count': 1,
                                                     'id': str(200000 + i), 'author': a}
@@ -397,7 +457,7 @@ def test_handle_message_branches():
     assert call_count[0] == 2  # 重搜触发了第二次搜索
     assert '重新搜索' in joined_retry and 'ID：500000' in joined_retry
     # 9. 无状态时重搜 → 提示无记录
-    SEARCH_STATE.pop(GROUP, None)
+    SEARCH_STATE.pop(state_key, None)
     run('错了')
     assert '没有可重新搜索的记录' in sent[0][1]['message']
     # 10. 详情预览：@详情 350234 → 纯文字详情（mock get_album_info，不发图）

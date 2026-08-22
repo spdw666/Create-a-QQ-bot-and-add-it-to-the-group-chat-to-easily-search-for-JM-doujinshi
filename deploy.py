@@ -80,6 +80,7 @@ def main():
     # Git Bash 会把 /opt/... 参数转成 Windows 路径；远程路径内置兜底
     PATH_MAP = {
         'jm_niang.py': '/opt/jmniang/jm_niang.py',
+        'jm_store.py': '/opt/jmniang/jm_store.py',
         'jm_download.py': '/opt/jmniang/jm_download.py',
         'README.md': '/opt/jmniang/README.md',
         'requirements.txt': '/opt/jmniang/requirements.txt',

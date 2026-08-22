@@ -23,6 +23,8 @@ import datetime
 
 import websockets
 
+from jm_store import create_job, get_job_by_recent_index, list_jobs, update_job
+
 from jm_download import (
     download_album_to_zip,
     find_cached_zip,
@@ -148,6 +150,9 @@ HELP_TEXT = (
     '   停止当前下载并清除已下载的缓存\n\n'
     '📋 查看任务：@我 任务\n'
     '   查看正在处理的任务及预计剩余时间\n\n'
+    '🧾 我的下载：@我 我的下载 / 我的任务\n'
+    '   查看你自己的下载历史与当前任务（机器人重启后仍保留）\n'
+    '   @我 重发 1 可重新处理第 1 条记录\n\n'
     '🔍 自查：@我 自查\n'
     '   查看运行时长与当前连接状态\n\n'
     '🎲 随机推荐：@我 随机\n'
@@ -202,10 +207,12 @@ BUTTON_MENU = (
     '   〔作者〕@我 作者 + 名字\n'
     '   〔标签〕@我 标签 + 名称\n'
     '   〔详情〕@我 详情 + ID\n'
+    '   〔序号操作〕@我 下载 3 / 详情 3\n'
     '   〔识图〕@我 识图 → 20秒内发图\n\n'
     '🟨 其他\n'
     '   〔菜单〕@我 菜单 · 〔说明〕@我 说明\n'
     '   搜索超过5本：直接发〔下一页〕/〔第3页〕翻页\n'
+    '   我的记录：@我 我的下载 / 我的任务\n'
     '   取消下载：@我 取消\n'
     f'   🔐 压缩包密码：{ZIP_PASSWORD}\n'
 )
@@ -233,6 +240,10 @@ RANK_WORDS = {'日榜', '周榜', '月榜', 'day', 'week', 'month'}
 
 # 任务查询命令词（@机器人 任务 → 查看当前处理中任务及预计时间）
 TASK_WORDS = {'任务', '队列', '排队', 'task', 'queue'}
+
+# 个人任务与下载历史（按“群 + 用户”隔离，重启后仍可查看）
+MY_TASK_WORDS = {'我的任务', '我的下载', '下载历史', '我的历史'}
+RESEND_RE = re.compile(r'^\s*重发\s*(\d{1,2})\s*$')
 
 # 自查命令词（@机器人 自查 → 报告运行时长与连接状态）
 SELF_CHECK_WORDS = {'自查'}
@@ -263,10 +274,36 @@ def search_cooldown_hit(group_id):
     return False
 
 
-# 搜索结果翻页状态（group_id -> {keyword, kind, head, results, page, ts}）
+# 搜索结果翻页状态（(group_id, user_id) -> {keyword, kind, head, results, page, ts}）。
+# 同一群里的不同用户各自拥有结果和翻页位置，避免 A 的搜索覆盖 B。
 SEARCH_STATE = {}
 SEARCH_STATE_TTL = 600  # 10分钟不翻页则过期
 PAGE_SIZE = 5
+
+
+def _search_state_key(group_id, user_id):
+    return str(group_id), str(user_id)
+
+
+def get_search_state(group_id, user_id):
+    return SEARCH_STATE.get(_search_state_key(group_id, user_id))
+
+
+def set_search_state(group_id, user_id, state):
+    cleanup_search_states()
+    SEARCH_STATE[_search_state_key(group_id, user_id)] = state
+    return state
+
+
+def clear_search_state(group_id, user_id):
+    SEARCH_STATE.pop(_search_state_key(group_id, user_id), None)
+
+
+def cleanup_search_states():
+    now = time.time()
+    for key, state in list(SEARCH_STATE.items()):
+        if now - state.get('ts', 0) > SEARCH_STATE_TTL:
+            SEARCH_STATE.pop(key, None)
 
 
 def render_search_page(state, page):
@@ -286,6 +323,7 @@ def render_search_page(state, page):
         lines.append('💡 直接发「下一页」翻页，或发「第N页」跳转（无需@我）')
     else:
         lines.append('✅ 已查看完全部结果')
+    lines.append('💡 @我「下载 3」或「详情 3」可操作列表第 3 本')
     return '\n'.join(lines)
 
 
@@ -307,20 +345,20 @@ def render_image_result(result):
         for i, r in enumerate(result['matches'], 1):
             lines.append(f'{i}. 《{escape_cq(r["title"])}》 章节：{r["chapter_count"]}章\n'
                          f'   🔢 ID：{r["id"]}')
-        lines.append('想要下载？@我 + 发送对应的ID')
+        lines.append('想要下载？@我 + 发送对应的ID，或 @我「下载 1」')
     else:
         lines.append('⚠️ 禁漫未搜到同款本子')
     return '\n'.join(lines)
 
 
-async def handle_next_page(api, group_id, silent=False, page=None):
+async def handle_next_page(api, group_id, user_id, silent=False, page=None):
     """
     翻页/跳页：显示上一次搜索结果的下一页（page=None）或第 page 页。
     silent=True（免@触发）时无状态则静默忽略；跳转越界自动收敛到有效页。
     """
-    state = SEARCH_STATE.get(group_id)
+    state = get_search_state(group_id, user_id)
     if not state or time.time() - state['ts'] > SEARCH_STATE_TTL:
-        SEARCH_STATE.pop(group_id, None)
+        clear_search_state(group_id, user_id)
         if not silent:
             await api('send_group_msg', {
                 'group_id': group_id,
@@ -604,6 +642,32 @@ def _qq_process_etime():
     return None
 
 
+def extract_result_action(text: str):
+    """解析“下载 3”/“详情 3”这类基于当前结果列表的操作。
+
+    仅接受 1~3 位的序号，避免把正常的 5~9 位 JM ID 误判成序号。
+    """
+    if not text:
+        return None
+    m = re.fullmatch(r'\s*(下载|下|详情|预览)\s*(\d{1,3})\s*', text.lower())
+    if not m:
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def get_result_by_index(group_id, user_id, index):
+    """取用户最近搜索/榜单/识图结果的第 index 本（1-based）。"""
+    state = get_search_state(group_id, user_id)
+    if not state or time.time() - state.get('ts', 0) > SEARCH_STATE_TTL:
+        clear_search_state(group_id, user_id)
+        return None
+    results = state.get('results') or []
+    if index < 1 or index > len(results):
+        return None
+    state['ts'] = time.time()
+    return results[index - 1]
+
+
 def _parse_etime(t):
     """ps etime 文本 → 秒；支持 MM:SS / HH:MM:SS / D-HH:MM:SS 三种格式；失败返回 None"""
     try:
@@ -651,6 +715,56 @@ def render_task_status():
         else:
             lines.append(f'{len(lines) + 1}. 漫画 {aid}：准备中…')
     return '\n'.join(lines)
+
+
+def _job_status_text(status):
+    return {
+        'queued': '排队中', 'running': '处理中', 'completed': '已完成',
+        'cancelled': '已取消', 'failed': '失败',
+    }.get(status, status or '未知')
+
+
+def render_personal_jobs(group_id, user_id, active_only=False):
+    """渲染当前群内该用户自己的持久化任务和历史。"""
+    jobs = list_jobs(group_id, user_id, limit=10)
+    if active_only:
+        jobs = [j for j in jobs if j['status'] in ('queued', 'running')]
+    if not jobs:
+        return ''
+    lines = []
+    for index, job in enumerate(jobs, 1):
+        title = escape_cq(job.get('title') or f'JM{job["album_id"]}')
+        detail = f'{index}. {_job_status_text(job["status"])} · 《{title}》\n   🔢 ID：{job["album_id"]}'
+        if job.get('total_pages'):
+            detail += f' · {job["total_pages"]} 页'
+        if job.get('error') and job['status'] == 'failed':
+            detail += f' · {escape_cq(job["error"][:60])}'
+        lines.append(detail)
+    return '\n'.join(lines)
+
+
+async def send_album_detail(api, group_id, album_id):
+    """发送纯文字漫画详情；直接 ID 与“详情 序号”共用。"""
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': f'📋 正在获取漫画 {album_id} 的信息…'
+    })
+    info = await asyncio.to_thread(get_album_info, album_id)
+    if info:
+        tags = ', '.join(str(t) for t in (info.get('tags') or [])[:8])
+        msg = (f'📕《{escape_cq(info["title"])}》\n'
+               f'✍️ 作者：{escape_cq(info.get("author") or "未知")}\n'
+               f'🏷️ 标签：{escape_cq(tags) if tags else "无"}\n'
+               f'📚 共 {info["chapter_count"]} 章 / {info["page_count"]} 页\n'
+               f'🔗 禁漫：https://18comic.vip/album/{album_id}\n'
+               f'💾 @我 {album_id} 即可下载')
+        await api('send_group_msg', {'group_id': group_id, 'message': msg})
+        return info
+    await api('send_group_msg', {
+        'group_id': group_id,
+        'message': f'❌ 获取漫画 {album_id} 信息失败（ID 不存在或网络波动）'
+    })
+    return None
 
 
 # 进度条总条数控制：大本子（~90页起）全程约 7 条，小本子（几十页）目标条数随页数减少（2~4条），控制总量不刷屏。
@@ -760,7 +874,7 @@ async def monitor_progress(api, group_id, album_id, total_pages, download_task):
         await asyncio.sleep(3)
 
 
-async def handle_jm_request(ws, api, group_id, user_id, album_id):
+async def handle_jm_request(ws, api, group_id, user_id, album_id, job_id=None):
     """下载并上传一个漫画，负责回复群消息"""
     loop = asyncio.get_event_loop()
     # 重复请求防护：同一漫画已在下载/上传流程中时不再重复发起（防 QQ 消息重推导致发两个包）
@@ -769,9 +883,14 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             'group_id': group_id,
             'message': f'⏳ 漫画 {album_id} 正在处理中，请稍等片刻…'
         })
+        if job_id:
+            await asyncio.to_thread(update_job, job_id, status='cancelled',
+                                    error='相同漫画正在处理中', finished=True)
         return
     ACTIVE_DOWNLOADS.append(album_id)  # 立即占位，消除并发窗口（防双任务双份进度）
     ACTIVE_TASKS[album_id] = {'phase': '准备中', 'done': 0, 'total': 0}  # 排队告知用
+    if job_id:
+        await asyncio.to_thread(update_job, job_id, status='running', started=True)
     try:
         # 1. 缓存命中则直接上传（旧缓存若未加密，现场转加密，否则QQ会拒收）
         cached_zip, cached_title = await loop.run_in_executor(None, find_cached_zip, album_id)
@@ -781,6 +900,8 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             if not cached_zip:
                 raise RuntimeError(f'缓存ZIP加密转换失败: {album_id}')
             zip_path, title = cached_zip, cached_title
+            if job_id:
+                await asyncio.to_thread(update_job, job_id, title=title, zip_path=zip_path)
             await api('send_group_msg', {
                 'group_id': group_id,
                 'message': f'📦 漫画 {album_id} 之前下载过，直接发送缓存：\n《{escape_cq(title)}》\n正在上传…'
@@ -794,6 +915,8 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             info = await loop.run_in_executor(None, get_album_info, album_id)
             total_pages = info['page_count'] if info else 0
             if info:
+                if job_id:
+                    await asyncio.to_thread(update_job, job_id, title=info['title'], total_pages=total_pages)
                 est_low = max(1, int(total_pages * SECONDS_PER_PAGE_MIN / 60))
                 est_high = max(est_low + 1, int(total_pages * SECONDS_PER_PAGE_MAX / 60))
                 await api('send_group_msg', {
@@ -826,6 +949,9 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             # 4. 下载期间被取消：清理残留并回复
             if album_id in CANCELLED_ALBUMS:
                 await loop.run_in_executor(None, cleanup_cancelled, album_id)
+                if job_id:
+                    await asyncio.to_thread(update_job, job_id, status='cancelled',
+                                            error='用户取消', finished=True)
                 await api('send_group_msg', {
                     'group_id': group_id,
                     'message': f'🗑️ 漫画 {album_id} 已取消下载，缓存已清理'
@@ -900,6 +1026,11 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
             await asyncio.sleep(8)
 
         retcode = result.get('retcode') if result else None
+        if job_id:
+            await asyncio.to_thread(
+                update_job, job_id, status='completed', title=title, zip_path=zip_path,
+                upload_status='group_file' if retcode in (0, None) else 'link_only', finished=True,
+            )
         if retcode in (0, None):
             msg = f'✅ 已上传到群文件：{escape_cq(file_name)}\n（{format_bytes(size)}）'
         else:
@@ -918,17 +1049,23 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
     except DownloadCancelledError:
         # 用户取消下载：清理残留目录
         await loop.run_in_executor(None, cleanup_cancelled, album_id)
+        if job_id:
+            await asyncio.to_thread(update_job, job_id, status='cancelled', error='用户取消', finished=True)
         await api('send_group_msg', {
             'group_id': group_id,
             'message': f'🗑️ 漫画 {album_id} 已取消下载，缓存已清理'
         })
     except asyncio.TimeoutError:
+        if job_id:
+            await asyncio.to_thread(update_job, job_id, status='failed', error='处理超时', finished=True)
         await api('send_group_msg', {
             'group_id': group_id,
             'message': f'⏱️ 漫画 {album_id} 处理超时，请稍后重试。'
         })
     except Exception as e:
         log(f'处理 {album_id} 失败: {e!r}')
+        if job_id:
+            await asyncio.to_thread(update_job, job_id, status='failed', error=str(e), finished=True)
         await api('send_group_msg', {
             'group_id': group_id,
             'message': f'❌ 漫画 {album_id} 处理失败：{e}\n'
@@ -938,6 +1075,27 @@ async def handle_jm_request(ws, api, group_id, user_id, album_id):
         if album_id in ACTIVE_DOWNLOADS:
             ACTIVE_DOWNLOADS.remove(album_id)
         ACTIVE_TASKS.pop(album_id, None)
+
+
+async def enqueue_download(ws, api, group_id, user_id, album_id, source='id'):
+    """登记个人任务后进入现有全局并发队列。"""
+    global DOWNLOAD_QUEUE
+    job_id = await asyncio.to_thread(create_job, group_id, user_id, album_id, source)
+    DOWNLOAD_QUEUE += 1
+    try:
+        if SEMAPHORE.locked():
+            tasks_txt = render_task_status()
+            msg = f'📥 下载任务较多，漫画 {album_id} 已加入队列\n'
+            if tasks_txt:
+                msg += f'📋 当前任务：\n{tasks_txt}\n'
+            msg += f'（前面还有约 {DOWNLOAD_QUEUE} 个任务，'
+            msg += f'每个约 2-10 分钟，请耐心等待…）'
+            await api('send_group_msg', {'group_id': group_id, 'message': msg})
+
+        async with SEMAPHORE:
+            await handle_jm_request(ws, api, group_id, user_id, album_id, job_id)
+    finally:
+        DOWNLOAD_QUEUE -= 1
 
 
 async def _search_image_with_timeout(img_bytes, timeout=60):
@@ -1041,7 +1199,7 @@ async def handle_apk_request(api, group_id):
     # 上传成功则静默（文件已出现在群里，链接消息里已有全部信息）
 
 
-async def handle_image_search(api, group_id, images):
+async def handle_image_search(api, group_id, user_id, images):
     """识图处理：取图 → search_by_image → 缓存状态 → 回复（@+图 与 等待窗口 两处共用）"""
     if search_cooldown_hit(group_id):
         await api('send_group_msg', {
@@ -1076,13 +1234,10 @@ async def handle_image_search(api, group_id, images):
         })
         return
     # 缓存最近一张图到搜索状态：@不对 时用同一张图重新识图
-    now = time.time()
-    for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-        SEARCH_STATE.pop(gid, None)
-    SEARCH_STATE[group_id] = {
+    set_search_state(group_id, user_id, {
         'kind': 'image', 'keyword': '', 'img_bytes': img_bytes,
-        'head': '🔍 识图', 'results': [], 'page': 1, 'ts': now,
-    }
+        'head': '🔍 识图', 'results': result.get('matches') or [], 'page': 1, 'ts': time.time(),
+    })
     await api('send_group_msg', {
         'group_id': group_id,
         'message': render_image_result(result)
@@ -1097,12 +1252,13 @@ NO_AT_BUTTONS = {
     '日榜': 'rank:day', '周榜': 'rank:week', '月榜': 'rank:month',
     '安装包': 'apk', '禁漫': 'apk', '禁漫天堂': 'apk', '禁漫安装包': 'apk', '天堂安装包': 'apk',
     '任务': 'task', '队列': 'task', '排队': 'task',
+    '我的任务': 'my_task', '我的下载': 'my_download', '下载历史': 'my_download',
     '自查': 'selfcheck',
     '说明': 'help', '帮助': 'help', '菜单': 'menu', '按钮': 'menu',
 }
 
 
-async def handle_no_at_button(api, group_id, text):
+async def handle_no_at_button(api, group_id, user_id, text):
     """免@按钮路由：text 精确命中 NO_AT_BUTTONS 时执行对应功能，返回 True；否则返回 False（交由上层静默/翻页）"""
     low = text.lower().strip()
     action = NO_AT_BUTTONS.get(low)
@@ -1158,15 +1314,12 @@ async def handle_no_at_button(api, group_id, text):
         if not results:
             await send('榜单暂无数据')
             return True
-        now = time.time()
-        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-            SEARCH_STATE.pop(gid, None)
-        SEARCH_STATE[group_id] = {
+        state = set_search_state(group_id, user_id, {
             'head': f'📊 {cn}',
-            'results': results, 'page': 1, 'ts': now,
+            'results': results, 'page': 1, 'ts': time.time(),
             'kind': 'rank', 'keyword': rank_type,
-        }
-        await send(render_search_page(SEARCH_STATE[group_id], 1))
+        })
+        await send(render_search_page(state, 1))
         return True
 
     if action == 'apk':
@@ -1179,6 +1332,17 @@ async def handle_no_at_button(api, group_id, text):
             await send(f'📋 当前任务：\n{tasks_txt}')
         else:
             await send('✅ 当前没有正在处理的任务，可以直接@我下载哦～')
+        return True
+
+    if action in ('my_task', 'my_download'):
+        jobs_txt = await asyncio.to_thread(
+            render_personal_jobs, group_id, user_id, action == 'my_task'
+        )
+        if jobs_txt:
+            heading = '📋 我的任务：' if action == 'my_task' else '📚 我的下载（最近10条）：'
+            await send(heading + '\n' + jobs_txt)
+        else:
+            await send('✅ 你当前没有排队任务' if action == 'my_task' else '📚 还没有你的下载记录')
         return True
 
     if action == 'selfcheck':
@@ -1221,18 +1385,18 @@ async def handle_message(ws, api, msg, bot_qq):
             images = extract_images(msg)
             if images:
                 IMAGE_WAIT.pop(group_id, None)
-                await handle_image_search(api, group_id, images)
+                await handle_image_search(api, group_id, user_id, images)
                 return
         elif wait:
             IMAGE_WAIT.pop(group_id, None)  # 过期清理
         # 翻页/跳页命令免@：直接发「下一页」或「第N页」，无需先@机器人；无状态则静默
         page_num = extract_page(text) if text else None
         if text and (text.lower() in NEXT_WORDS or page_num):
-            await handle_next_page(api, group_id, silent=True, page=page_num)
+            await handle_next_page(api, group_id, user_id, silent=True, page=page_num)
             return
         # 免@按钮命令：直接发「随机/日榜/安装包/任务/自查…」等按钮词即可触发（等同点按钮）
         if text:
-            handled = await handle_no_at_button(api, group_id, text)
+            handled = await handle_no_at_button(api, group_id, user_id, text)
             if handled:
                 return
         return
@@ -1363,17 +1527,14 @@ async def handle_message(ws, api, msg, bot_qq):
                 'message': '榜单暂无数据'
             })
             return
-        now = time.time()
-        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-            SEARCH_STATE.pop(gid, None)
-        SEARCH_STATE[group_id] = {
+        state = set_search_state(group_id, user_id, {
             'head': f'📊 {escape_cq(text)}',
-            'results': results, 'page': 1, 'ts': now,
+            'results': results, 'page': 1, 'ts': time.time(),
             'kind': 'rank', 'keyword': rank_type,
-        }
+        })
         await api('send_group_msg', {
             'group_id': group_id,
-            'message': render_search_page(SEARCH_STATE[group_id], 1)
+            'message': render_search_page(state, 1)
         })
         return
 
@@ -1403,31 +1564,28 @@ async def handle_message(ws, api, msg, bot_qq):
                 'message': '没有找到该标签所对应的本子'
             })
             return
-        now = time.time()
-        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-            SEARCH_STATE.pop(gid, None)
-        SEARCH_STATE[group_id] = {
+        state = set_search_state(group_id, user_id, {
             'head': f'🏷️ 标签「{escape_cq(tag)}」的本子',
-            'results': results, 'page': 1, 'ts': now,
+            'results': results, 'page': 1, 'ts': time.time(),
             'kind': 'tag', 'keyword': tag,
-        }
+        })
         await api('send_group_msg', {
             'group_id': group_id,
-            'message': render_search_page(SEARCH_STATE[group_id], 1)
+            'message': render_search_page(state, 1)
         })
         return
 
     # 翻页/跳页：@机器人 + 下一页/翻页/第N页（也支持免@直接发）
     page_num = extract_page(text)
     if text.lower() in NEXT_WORDS or page_num:
-        await handle_next_page(api, group_id, page=page_num)
+        await handle_next_page(api, group_id, user_id, page=page_num)
         return
 
     # 重新搜索：@机器人 + 不对/错了/重新搜 → 重跑上一次搜索
     if text.lower() in RETRY_WORDS:
-        state = SEARCH_STATE.get(group_id)
+        state = get_search_state(group_id, user_id)
         if not state or time.time() - state['ts'] > SEARCH_STATE_TTL:
-            SEARCH_STATE.pop(group_id, None)
+            clear_search_state(group_id, user_id)
             await api('send_group_msg', {
                 'group_id': group_id,
                 'message': '📄 没有可重新搜索的记录（请先搜索一次）'
@@ -1524,44 +1682,73 @@ async def handle_message(ws, api, msg, bot_qq):
                 'message': '没有找到该作者所对应的本子'
             })
             return
-        # 清理过期翻页状态（群数量有限，全量扫描）
-        now = time.time()
-        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-            SEARCH_STATE.pop(gid, None)
-        SEARCH_STATE[group_id] = {
+        state = set_search_state(group_id, user_id, {
             'head': f'✍️ 作者「{escape_cq(author)}」的本子',
-            'results': results, 'page': 1, 'ts': now,
+            'results': results, 'page': 1, 'ts': time.time(),
             'kind': 'author', 'keyword': author,
-        }
+        })
         await api('send_group_msg', {
             'group_id': group_id,
-            'message': render_search_page(SEARCH_STATE[group_id], 1)
+            'message': render_search_page(state, 1)
         })
+        return
+
+    # 结果序号操作：@机器人 + 下载 3 / 详情 3。
+    # 只接受带 @ 的操作，避免普通聊天中的短句误触发下载。
+    result_action = extract_result_action(text)
+    if result_action:
+        action, index = result_action
+        result = get_result_by_index(group_id, user_id, index)
+        if not result:
+            await api('send_group_msg', {
+                'group_id': group_id,
+                'message': f'📄 没有第 {index} 条可操作的结果（请先搜索，或结果已过期）'
+            })
+            return
+        album_id = str(result.get('id', ''))
+        if not album_id:
+            await api('send_group_msg', {'group_id': group_id, 'message': '❌ 该结果缺少漫画 ID，无法操作'})
+            return
+        if action in ('详情', '预览'):
+            await send_album_detail(api, group_id, album_id)
+        else:
+            await enqueue_download(ws, api, group_id, user_id, album_id, source='result')
         return
 
     # 详情预览命令：@机器人 + 详情 <ID> → 纯文字详情（不发图，防QQ内容扫描）
     detail_id = extract_detail_id(text)
     if detail_id:
         log(f'群 {group_id} 用户 {user_id} 请求详情: {detail_id}')
-        await api('send_group_msg', {
-            'group_id': group_id,
-            'message': f'📋 正在获取漫画 {detail_id} 的信息…'
-        })
-        info = await asyncio.to_thread(get_album_info, detail_id)
-        if info:
-            tags = ', '.join(str(t) for t in (info.get('tags') or [])[:8])
-            msg = (f'📕《{escape_cq(info["title"])}》\n'
-                   f'✍️ 作者：{escape_cq(info.get("author") or "未知")}\n'
-                   f'🏷️ 标签：{escape_cq(tags) if tags else "无"}\n'
-                   f'📚 共 {info["chapter_count"]} 章 / {info["page_count"]} 页\n'
-                   f'🔗 禁漫：https://18comic.vip/album/{detail_id}\n'
-                   f'💾 @我 {detail_id} 即可下载')
-            await api('send_group_msg', {'group_id': group_id, 'message': msg})
+        await send_album_detail(api, group_id, detail_id)
+        return
+
+    # 个人任务/下载历史：读取 SQLite，重启机器人后仍可保留。
+    if text.lower() in MY_TASK_WORDS:
+        active_only = text.lower() == '我的任务'
+        jobs_txt = await asyncio.to_thread(render_personal_jobs, group_id, user_id, active_only)
+        if jobs_txt:
+            heading = '📋 我的任务：' if active_only else '📚 我的下载（最近10条）：'
+            footer = '\n💡 @我「重发 1」可重新处理对应记录' if not active_only else ''
+            await api('send_group_msg', {'group_id': group_id, 'message': heading + '\n' + jobs_txt + footer})
         else:
             await api('send_group_msg', {
                 'group_id': group_id,
-                'message': f'❌ 获取漫画 {detail_id} 信息失败（ID 不存在或网络波动）'
+                'message': '✅ 你当前没有排队任务' if active_only else '📚 还没有你的下载记录'
             })
+        return
+
+    resend_match = RESEND_RE.fullmatch(text)
+    if resend_match:
+        index = int(resend_match.group(1))
+        job = await asyncio.to_thread(get_job_by_recent_index, group_id, user_id, index)
+        if not job:
+            await api('send_group_msg', {'group_id': group_id, 'message': f'📄 没有第 {index} 条下载记录'})
+            return
+        await api('send_group_msg', {
+            'group_id': group_id,
+            'message': f'🔁 正在重新处理 JM{job["album_id"]}（优先使用服务器缓存）…'
+        })
+        await enqueue_download(ws, api, group_id, user_id, job['album_id'], source='resend')
         return
 
     # 任务查询：@机器人 + 任务 → 查看当前处理中任务及预计剩余时间
@@ -1591,34 +1778,14 @@ async def handle_message(ws, api, msg, bot_qq):
     album_id = extract_album_id(text)
     if album_id:
         log(f'群 {group_id} 用户 {user_id} 请求下载: {album_id}')
-
-        # 排队通知（同时最多 MAX_CONCURRENT_DOWNLOADS 本在下载）
-        global DOWNLOAD_QUEUE
-        DOWNLOAD_QUEUE += 1
-        try:
-            if SEMAPHORE.locked():
-                tasks_txt = render_task_status()
-                msg = f'📥 下载任务较多，漫画 {album_id} 已加入队列\n'
-                if tasks_txt:
-                    msg += f'📋 当前任务：\n{tasks_txt}\n'
-                msg += f'（前面还有约 {DOWNLOAD_QUEUE} 个任务，'
-                msg += f'每个约 2-10 分钟，请耐心等待…）'
-                await api('send_group_msg', {
-                    'group_id': group_id,
-                    'message': msg
-                })
-
-            async with SEMAPHORE:
-                await handle_jm_request(ws, api, group_id, user_id, album_id)
-        finally:
-            DOWNLOAD_QUEUE -= 1
+        await enqueue_download(ws, api, group_id, user_id, album_id)
         return
 
     # 以图搜本：@机器人 + [图片]（text 为空但带图）→ 直接识图
     images = extract_images(msg)
     if images:
         log(f'识图请求: url={images[0]["url"][:100]!r} file={images[0]["file"][:80]!r}')
-        await handle_image_search(api, group_id, images)
+        await handle_image_search(api, group_id, user_id, images)
         return
 
     # 纯@（空文本、无图）→ 输出按钮功能菜单（用户@一下就能看到所有可用的按钮功能）
@@ -1666,18 +1833,14 @@ async def handle_message(ws, api, msg, bot_qq):
                 'message': '没有找到该关键词所对应的本子'
             })
             return
-        # 清理过期翻页状态（群数量有限，全量扫描）
-        now = time.time()
-        for gid in [g for g, s in SEARCH_STATE.items() if now - s['ts'] > SEARCH_STATE_TTL]:
-            SEARCH_STATE.pop(gid, None)
-        SEARCH_STATE[group_id] = {
+        state = set_search_state(group_id, user_id, {
             'head': f'🔍 关键词「{escape_cq(keyword)}」',
-            'results': results, 'page': 1, 'ts': now,
+            'results': results, 'page': 1, 'ts': time.time(),
             'kind': 'search', 'keyword': keyword,
-        }
+        })
         await api('send_group_msg', {
             'group_id': group_id,
-            'message': render_search_page(SEARCH_STATE[group_id], 1)
+            'message': render_search_page(state, 1)
         })
 
 

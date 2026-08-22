@@ -12,7 +12,7 @@
 [![OneBot](https://img.shields.io/badge/Protocol-OneBot%20v11-7d3cff?style=flat-square)](https://onebot.dev/)
 [![Stars](https://img.shields.io/github/stars/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi?style=flat-square&logo=github&logoColor=white)](https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi)
 [![Last commit](https://img.shields.io/github/last-commit/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi?style=flat-square&logo=git&logoColor=white)](https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi)
-[![Tests](https://img.shields.io/badge/tests-32%20passed-brightgreen?style=flat-square)](test_jm_download.py)
+[![Tests](https://img.shields.io/badge/tests-34%20passed-brightgreen?style=flat-square)](test_jm_download.py)
 
 </div>
 
@@ -64,7 +64,9 @@
 | `@bot 随机` | 从近 30 天最火的本子里随机推荐一本（优先章节少的） | Random pick from the hottest albums of the last 30 days (prefers fewer chapters) |
 | `@bot 今日属性` | 占卜今日属性（NTR/纯爱等 36 个标签），@你并附赠一本（优先章节少的） | Daily "attribute" fortune (36 tags), mentions you and gifts a matching album (prefers fewer chapters) |
 | `@bot 详情 <ID>` | 查看漫画详情（标题/作者/标签/章节页数，纯文字） | Show album details (title / author / tags / pages, text only) |
+| `@bot 下载 <序号>` / `@bot 详情 <序号>` | 操作自己最近一次搜索、榜单或识图结果中的对应序号 | Download / preview an item from **your own** latest search, ranking, or image result |
 | `@bot 任务` | 查看正在处理的任务及预计剩余时间 | Show in-progress tasks with ETA |
+| `@bot 我的任务` / `@bot 我的下载` | 查看自己的排队任务或最近 10 条下载历史（重启后保留）；`@bot 重发 1` 重试对应记录 | Show your queued jobs or last 10 download records (survives restarts); `@bot 重发 1` retries an entry |
 | `@bot 自查` | 查看机器人运行时长与当前 QQ 连接状态 | Show bot uptime and current QQ connection status |
 | `@bot 安装包` | 发送禁漫天堂 APP 安装包（安卓 APK + 苹果描述文件，加密 ZIP 上传群文件 + 浏览器链接；也支持 `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包`） | Send the official app installer (Android APK + iOS profile, encrypted ZIP + browser link; `禁漫`/`禁漫天堂`/`禁漫安装包`/`天堂安装包`/`jm安装包`/`jm2安装包`/`jm3安装包` also work) |
 | `@bot 下一页` | 翻页；**直接发「下一页」「第N页」也可（无需@）** | Next page; **just send `下一页` / `第N页` (no mention needed)** |
