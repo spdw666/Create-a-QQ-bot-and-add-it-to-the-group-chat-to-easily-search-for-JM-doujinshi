@@ -12,7 +12,7 @@
 [![OneBot](https://img.shields.io/badge/Protocol-OneBot%20v11-7d3cff?style=flat-square)](https://onebot.dev/)
 [![Stars](https://img.shields.io/github/stars/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi?style=flat-square&logo=github&logoColor=white)](https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi)
 [![Last commit](https://img.shields.io/github/last-commit/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi?style=flat-square&logo=git&logoColor=white)](https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi)
-[![Tests](https://img.shields.io/badge/tests-34%20passed-brightgreen?style=flat-square)](test_jm_download.py)
+[![Tests](https://img.shields.io/badge/tests-40%20passed-brightgreen?style=flat-square)](test_jm_download.py)
 
 </div>
 
