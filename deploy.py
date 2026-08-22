@@ -10,8 +10,8 @@ import time
 
 import paramiko
 
-HOST = '64.90.13.42'
-USER = 'root'
+HOST = os.environ.get('JM_SERVER_HOST', '64.90.13.42')
+USER = os.environ.get('JM_SERVER_USER', 'root')
 # 密码从本地 secret 文件读取（不入库）；文件路径：仓库根目录/.deploy_secret
 SECRET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.deploy_secret')
 
