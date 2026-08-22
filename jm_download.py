@@ -63,12 +63,52 @@ USE_NEW_IMAGE_SOURCES = bool(os.environ.get('JM_NEW_IMAGE_SOURCES', '').strip())
 # AgentKey MCP（识图中转：ascii2d 直连被反爬时经 Firecrawl 浏览器渲染，绕过 DC IP 封锁）
 AGENTKEY_KEY = os.environ.get('JM_AGENTKEY_KEY', '').strip()
 AGENTKEY_MCP_URL = 'https://api.agentkey.app/v1/mcp'
+# AgentKey 每日调用限额（防刷图烧钱；文件持久化跨重启）
+AGENTKEY_DAILY_LIMIT = int(os.environ.get('JM_AGENTKEY_DAILY_LIMIT', '50'))
+AGENTKEY_COUNT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.agentkey_count.json')
+# 结构化指标（metrics.jsonl，一行一事件，出问题先看它）
+METRICS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'metrics.jsonl')
+
+
+def _log_metric(event, **fields):
+    import json
+    try:
+        row = {'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'ev': event, **fields}
+        with open(METRICS_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(row, ensure_ascii=False) + '\n')
+    except Exception:
+        pass
+
+
+def _agentkey_budget_ok():
+    """检查并占用当日 AgentKey 额度。True=可用（已计数）；False=超限（熔断）"""
+    import json
+    today = time.strftime('%Y-%m-%d')
+    try:
+        with open(AGENTKEY_COUNT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('date') != today:
+            data = {'date': today, 'count': 0}
+    except Exception:
+        data = {'date': today, 'count': 0}
+    if data['count'] >= AGENTKEY_DAILY_LIMIT:
+        return False
+    data['count'] += 1
+    try:
+        with open(AGENTKEY_COUNT_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+    return True
 
 
 def _agentkey_execute(name, params, timeout=75):
     """经 AgentKey MCP 的 execute_tool 调用外部工具（纯 JSON-RPC，无会话模式）。
     返回 result 内第一个 JSON 文本块；失败返回 None"""
     if not AGENTKEY_KEY:
+        return None
+    if not _agentkey_budget_ok():
+        _log_metric('agentkey_blocked', tool=name)
         return None
     import json
     import urllib.request
@@ -84,16 +124,20 @@ def _agentkey_execute(name, params, timeout=75):
         j = json.loads(resp.read().decode('utf-8', 'ignore'))
         res = j.get('result') or {}
         if res.get('isError'):
+            _log_metric('agentkey_call', tool=name, ok=False, err='isError')
             return None
         for c in (res.get('content') or []):
             t = c.get('text') or ''
             if t.startswith('{'):
                 try:
-                    return json.loads(t)
+                    data = json.loads(t)
+                    _log_metric('agentkey_call', tool=name, ok=True, secs=round(resp.elapsed.total_seconds(), 1) if hasattr(resp, 'elapsed') else None)
+                    return data
                 except Exception:
                     return None
         return None
-    except Exception:
+    except Exception as e:
+        _log_metric('agentkey_call', tool=name, ok=False, err=str(e)[:60])
         return None
 
 
@@ -1013,8 +1057,13 @@ def search_by_image(img_bytes):
     if cached is not None:
         res = dict(cached)
         res['cached'] = True
+        _log_metric('img_cache_hit', hash8=h[:8])
         return res
+    t0 = time.time()
     res = _search_by_image_impl(img_bytes)
+    _log_metric('img_search', hash8=h[:8], secs=round(time.time() - t0, 1),
+                n_matches=len((res or {}).get('matches') or []),
+                src=(res or {}).get('source_title', '')[:40])
     if res is not None:
         _IMG_RESULT_CACHE[h] = res
         if len(_IMG_RESULT_CACHE) > 300:
@@ -1050,8 +1099,9 @@ def _search_by_image_impl(img_bytes):
                 'ocr_texts': ocr_texts[:6],
             }
     # 2. 视觉识图（SauceNAO + Google + E-Hentai + iQDB + ascii2d + Yandex 六路并发，总耗时=最慢一路，60s 总超时内全部出结果）
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
+    pool = ThreadPoolExecutor(max_workers=6)
+    try:
         f_sauce = pool.submit(_sauce_search, img_bytes)
         f_google = pool.submit(_google_web_search, img_bytes)
         f_eh = pool.submit(_ehentai_search, img_bytes)
@@ -1059,13 +1109,26 @@ def _search_by_image_impl(img_bytes):
         f_ascii2d = pool.submit(_ascii2d_search, img_bytes) if USE_NEW_IMAGE_SOURCES else None
         f_yandex = pool.submit(_yandex_search, img_bytes) if USE_NEW_IMAGE_SOURCES else None
         f_llm = pool.submit(_llm_extract_fields, img_bytes)  # LLM 结构化提取与引擎并行
-        sauce_results = f_sauce.result()
-        google_results = f_google.result()
-        eh_results = f_eh.result()
-        iqdb_results = f_iqdb.result()
-        ascii2d_results = f_ascii2d.result() if f_ascii2d else []
-        yandex_results = f_yandex.result() if f_yandex else []
-        llm_fields = f_llm.result() or {}
+        # 等 55s：到点只取已完成结果，慢引擎不再阻塞（外层 60s 总超时真正生效）
+        done, _ = futures_wait([f for f in (f_sauce, f_google, f_eh, f_iqdb, f_ascii2d, f_yandex, f_llm) if f], timeout=55)
+
+        def _pick(f, default):
+            if f is None or f not in done:
+                return default
+            try:
+                return f.result()
+            except Exception:
+                return default
+
+        sauce_results = _pick(f_sauce, []) or []
+        google_results = _pick(f_google, []) or []
+        eh_results = _pick(f_eh, []) or []
+        iqdb_results = _pick(f_iqdb, []) or []
+        ascii2d_results = _pick(f_ascii2d, []) or []
+        yandex_results = _pick(f_yandex, []) or []
+        llm_fields = _pick(f_llm, {}) or {}
+    finally:
+        pool.shutdown(wait=False)  # 不等待慢任务，线程后台自然结束
     candidates = []  # (kws, url) 展示候选
     match_candidates = []  # 参与禁漫标题匹配的候选（SauceNAO 需 sim≥55；低相似度只展示不匹配，防误搜出无关本子）
     author_candidates = []  # 参与禁漫作者匹配的候选（SauceNAO 作者字段）
@@ -1074,7 +1137,7 @@ def _search_by_image_impl(img_bytes):
         if sim >= 40 and kws:
             candidates.append((kws, url))
             if sim >= 55:
-                match_candidates.append(kws)
+                match_candidates.append((sim, kws))
                 if authors:
                     author_candidates.append(authors)
             if len(candidates) >= 3:
@@ -1084,27 +1147,27 @@ def _search_by_image_impl(img_bytes):
         if kws and score >= 0.6:
             candidates.append((kws, ''))
             if score >= 1.0:
-                match_candidates.append(kws)
+                match_candidates.append((min(score, 100.0), kws))
             if len(candidates) >= 5:
                 break
     for title, url in eh_results:
         candidates.append(([title], url))
-        match_candidates.append([title])
+        match_candidates.append((80, [title]))
         if len(candidates) >= 5:
             break
     for title, url in iqdb_results:
         candidates.append(([title], url))
-        match_candidates.append([title])
+        match_candidates.append((80, [title]))
         if len(candidates) >= 5:
             break
     for title, url in ascii2d_results:
         candidates.append(([title], url))
-        match_candidates.append([title])
+        match_candidates.append((80, [title]))
         if len(candidates) >= 5:
             break
     for title, url in yandex_results:
         candidates.append(([title], url))
-        match_candidates.append([title])
+        match_candidates.append((80, [title]))
         if len(candidates) >= 5:
             break
     if not candidates:
@@ -1133,7 +1196,8 @@ def _search_by_image_impl(img_bytes):
         return None
     # 识图关键词 → 禁漫搜索（四层变体自动生效）；标题优先，作者名补充（作者候选走 search_author_album）
     matches, seen = [], set()
-    for kws in match_candidates[:5]:
+    match_candidates.sort(key=lambda x: -x[0])  # 置信度降序：索引直命中(80) > SauceNAO sim
+    for _, kws in match_candidates[:5]:
         for kw in kws[:3]:
             for r in (search_album(kw, max_count=3) or []):
                 if r['id'] not in seen:

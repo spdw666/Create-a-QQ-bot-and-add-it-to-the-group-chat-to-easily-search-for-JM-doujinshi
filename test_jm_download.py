@@ -757,3 +757,39 @@ def test_yandex_search_failure_returns_empty(monkeypatch):
             raise RuntimeError('blocked')
     monkeypatch.setattr(cc_requests, 'Session', BoomSession)
     assert _yandex_search(b'x') == []
+
+
+def test_agentkey_budget_blocks_after_limit(monkeypatch, tmp_path):
+    """AgentKey 熔断：超当日限额后 _agentkey_budget_ok 返回 False（防刷图烧钱）"""
+    import json
+    import jm_download as m
+    cf = tmp_path / "count.json"
+    cf.write_text(json.dumps({"date": "2099-01-01", "count": 999}), encoding="utf-8")
+    monkeypatch.setattr(m, "AGENTKEY_COUNT_FILE", str(cf))
+    real_strftime = m.time.strftime
+
+    def fake_strftime(fmt, *a, **k):
+        if fmt == "%Y-%m-%d":
+            return "2099-01-01"
+        return real_strftime(fmt, *a, **k)
+    monkeypatch.setattr(m.time, "strftime", fake_strftime)
+    assert m._agentkey_budget_ok() is False
+
+
+def test_image_cache_second_call_hits(monkeypatch, tmp_path):
+    """识图缓存回归：同图二次调用秒回 cached=True，不重复跑引擎（136 节功能防回归）"""
+    import jm_download as m
+    calls = []
+
+    def fake_impl(b):
+        calls.append(1)
+        return {"source_title": "T", "matches": [{"id": 1, "title": "t", "author": "", "chapter_count": 1}]}
+    monkeypatch.setattr(m, "_search_by_image_impl", fake_impl)
+    monkeypatch.setattr(m, "_IMG_RESULT_CACHE", {})
+    monkeypatch.setattr(m, "METRICS_FILE", str(tmp_path / "m.jsonl"))
+    r1 = m.search_by_image(b"img-bytes-1")
+    r2 = m.search_by_image(b"img-bytes-1")
+    assert len(calls) == 1, "第二次应命中缓存，不再调用实现"
+    assert r1.get("cached") is None
+    assert r2.get("cached") is True
+    assert r2.get("source_title") == "T"
