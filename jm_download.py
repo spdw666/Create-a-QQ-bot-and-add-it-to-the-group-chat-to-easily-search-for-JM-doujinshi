@@ -60,6 +60,110 @@ _IMG_RESULT_CACHE = {}
 # 新识图源（ascii2d/Yandex）默认关闭：服务器 DC IP 被反爬；配好 JM_PROXY/住宅代理后置 1 启用
 USE_NEW_IMAGE_SOURCES = bool(os.environ.get('JM_NEW_IMAGE_SOURCES', '').strip())
 
+# AgentKey MCP（识图中转：ascii2d 直连被反爬时经 Firecrawl 浏览器渲染，绕过 DC IP 封锁）
+AGENTKEY_KEY = os.environ.get('JM_AGENTKEY_KEY', '').strip()
+AGENTKEY_MCP_URL = 'https://api.agentkey.app/v1/mcp'
+
+
+def _agentkey_execute(name, params, timeout=75):
+    """经 AgentKey MCP 的 execute_tool 调用外部工具（纯 JSON-RPC，无会话模式）。
+    返回 result 内第一个 JSON 文本块；失败返回 None"""
+    if not AGENTKEY_KEY:
+        return None
+    import json
+    import urllib.request
+    body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                       'params': {'name': 'execute_tool',
+                                  'arguments': {'name': name, 'params': params}}}).encode()
+    req = urllib.request.Request(AGENTKEY_MCP_URL, data=body, method='POST',
+                                 headers={'Authorization': 'Bearer ' + AGENTKEY_KEY,
+                                          'Content-Type': 'application/json',
+                                          'Accept': 'application/json, text/event-stream'})
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        j = json.loads(resp.read().decode('utf-8', 'ignore'))
+        res = j.get('result') or {}
+        if res.get('isError'):
+            return None
+        for c in (res.get('content') or []):
+            t = c.get('text') or ''
+            if t.startswith('{'):
+                try:
+                    return json.loads(t)
+                except Exception:
+                    return None
+        return None
+    except Exception:
+        return None
+
+
+_ASCII2D_SKIP_HOSTS = ('ascii2d.net', 'dlaf.jp')  # 站内链接与广告
+
+
+def _parse_ascii2d_markdown(md):
+    """解析 Firecrawl 转写的 ascii2d 结果页 markdown → [(title, url)]（上限 3 条）"""
+    out = []
+    for block in re.split(r'\n\s*\* \* \*\s*\n', md):
+        links = re.findall(r'\[([^\]]*)\]\((https?://[^)\s]+)\)', block)
+        ext = [(t, u) for t, u in links if not any(h in u for h in _ASCII2D_SKIP_HOSTS)]
+        if not ext:
+            continue
+        title, url = ext[0]
+        for t, u in ext:
+            if any(h in u for h in ('pixiv.net', 'danbooru', 'melonbooks', 'dlsite.com')):
+                title, url = t, u
+                break
+        title = re.sub(r'\s+', ' ', title).strip()
+        if not title or title == url:
+            continue
+        out.append((title[:150], url))
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _ascii2d_search_via_firecrawl(img_bytes):
+    """直连被反爬时，经 AgentKey/Firecrawl 浏览器渲染抓 ascii2d URL 识图页。
+    图片先发布到 http_dl 公网目录；返回 [(title, url)]，失败返回 []"""
+    if not AGENTKEY_KEY:
+        return []
+    import hashlib
+    import os
+    import urllib.parse
+    img_path = None
+    try:
+        h = hashlib.sha256(img_bytes).hexdigest()[:8]
+        img_name = 'ris_%s.jpg' % h
+        img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'http_dl', img_name)
+        with open(img_path, 'wb') as f:
+            f.write(img_bytes)
+        pub = os.environ.get('JM_PUBLIC_IP', '').strip()
+        if not pub:
+            return []
+        img_url = 'http://%s:8080/%s' % (pub, img_name)
+        a2d_url = 'https://ascii2d.net/search/url/' + urllib.parse.quote(img_url, safe='')
+        data = _agentkey_execute('Firecrawl/scrape', {'url': a2d_url, 'formats': ['markdown']})
+        if not data:
+            return []
+        md = ((data.get('data') or {}).get('data') or {}).get('markdown') or ''
+        return _parse_ascii2d_markdown(md) if md else []
+    except Exception:
+        return []
+    finally:
+        try:
+            if img_path and os.path.exists(img_path):
+                os.remove(img_path)
+        except Exception:
+            pass
+
+
+def _ascii2d_search(img_bytes):
+    """ascii2d 识图：直连上传失败/被反爬 → AgentKey/Firecrawl 浏览器渲染兜底"""
+    out = _ascii2d_search_direct(img_bytes)
+    if not out:
+        out = _ascii2d_search_via_firecrawl(img_bytes)
+    return out
+
 # ---------- ZIP 加密配置 ----------
 # 开启后打包的ZIP带密码（AES-128），防止QQ内容扫描导致「文件瞬间失效」/上传被风控。
 # 注意：加密ZIP需 WinRAR / 7-Zip / ZArchiver（手机）等支持AES的工具解压，系统自带解压不支持。
@@ -670,8 +774,8 @@ def _iqdb_search(img_bytes):
         return []
 
 
-def _ascii2d_search(img_bytes):
-    """ascii2d 识图（无需 key，覆盖 Pixiv/推特/Danbooru 等日英标题）。
+def _ascii2d_search_direct(img_bytes):
+    """ascii2d 识图直连实现（无需 key，覆盖 Pixiv/推特/Danbooru 等日英标题）。
     上传 multipart → 302 拿结果页 → 特征检索页解析。返回 [(title, url)]，失败返回 []"""
     files = {'file': ('img.jpg', img_bytes, 'image/jpeg')}
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
