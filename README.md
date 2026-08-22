@@ -243,7 +243,8 @@ Edit `ALLOWED_GROUPS` in `jm_niang.py` to restrict which groups may use the bot 
 | `JM_GOOGLE_KEY` | ❌ | Google Cloud Vision API key（Web Detection 识图，每月前 1000 次免费，但需绑定海外信用卡启用；未填时该层自动跳过）。Optional Google Vision API key (1,000 free calls/month, but requires an international credit card to enable billing; skipped if empty). |
 | `JM_EH_COOKIES` | ❌ | E-Hentai 登录 cookie（以图搜本，登录 e-hentai.org 后 F12 控制台 `document.cookie` 复制整串；未填时 EH 识图层跳过）。Optional E-Hentai login cookie for reverse image search (run `document.cookie` in F12 console after login; skipped if empty). |
 | `JM_LLM_MODEL` | ❌ | 识图视觉模型（可选；默认 Qwen/Qwen3-VL-8B-Instruct 免费档；付费可配 Qwen/Qwen3-VL-30B-A3B-Instruct，更快更准）。Optional vision model for image search (default free Qwen/Qwen3-VL-8B-Instruct; paid Qwen/Qwen3-VL-30B-A3B-Instruct is faster & better). |
-| `JM_NEW_IMAGE_SOURCES` | ❌ | 启用 ascii2d / Yandex 新识图源（默认空=关；数据中心 IP 会被反爬拦截，需配合住宅代理/`JM_PROXY` 才有效）。Enable ascii2d/Yandex image sources (empty=off; datacenter IPs are blocked by anti-bot, needs a residential proxy / `JM_PROXY`). |
+| `JM_AGENTKEY_KEY` | ❌ | AgentKey API key（https://console.agentkey.app/ 获取；ascii2d 直连被反爬时自动经 AgentKey/Firecrawl 浏览器渲染中转，绕过数据中心 IP 封锁）。Optional AgentKey API key; when ascii2d direct access is blocked, the bot falls back to an AgentKey/Firecrawl browser-rendered relay that bypasses datacenter-IP blocks. |
+| `JM_NEW_IMAGE_SOURCES` | ❌ | 启用 ascii2d / Yandex 新识图源（默认空=关；ascii2d 直连被反爬时自动经 AgentKey/Firecrawl 中转，配 `JM_AGENTKEY_KEY` 即可生效；Yandex 仍需代理）。Enable ascii2d/Yandex sources (empty=off; ascii2d falls back to AgentKey/Firecrawl relay when blocked — just set `JM_AGENTKEY_KEY`; Yandex still needs a proxy). |
 
 ## 运维 Operations
 
