@@ -23,8 +23,6 @@ qrcode.png
 qq44343.rpm
 start_napcat.bat
 
-# 临时监控脚本（不入仓库）
-_monitor.py
 .deploy_secret
 # 运行时指标/熔断计数（服务器生成）
 metrics.jsonl
