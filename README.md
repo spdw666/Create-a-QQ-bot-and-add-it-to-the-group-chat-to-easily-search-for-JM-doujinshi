@@ -7,10 +7,10 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![OneBot](https://img.shields.io/badge/Protocol-OneBot%20v11-7d3cff?style=flat-square)](https://onebot.dev/)
 [![jmcomic](https://img.shields.io/badge/jmcomic-2.7.4-ff69b4?style=flat-square)](https://github.com/tonquer/jmcomic)
-[![Tests](https://img.shields.io/badge/tests-40%20passed-brightgreen?style=flat-square)](test_jm_download.py)
+[![Tests](https://img.shields.io/badge/tests-46%20passed-brightgreen?style=flat-square)](test_jm_download.py)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
 
-[快速开始](#快速开始) · [命令速查](#命令速查) · [部署](#生产部署) · [配置](#配置) · [运维](#运维) · [路线图](docs/roadmap.md)
+[Windows 一键启动](#windows-一键启动) · [命令速查](#命令速查) · [部署](#生产部署) · [配置](#配置) · [运维](#运维) · [路线图](docs/roadmap.md)
 
 </div>
 
@@ -102,18 +102,32 @@ QQ 群 ── OneBot v11 ── NapCat ── jm_niang.py
 
 ## 快速开始
 
+### Windows 一键启动
+
+新电脑请先完成一次 [首次运行指南](docs/first-run.md)：登录 NapCat，并在本机创建监听 `127.0.0.1:8081` 的 **OneBot v11 正向 WebSocket 服务端**。随后双击根目录 [`start_jmniang.bat`](start_jmniang.bat)。
+
+启动器会自动选择/安装 Python 3.11、创建 `.venv`、按 `requirements.txt` 安装依赖、首次生成本地 `.env`、检查 NapCat，并在同一窗口运行机器人和 `http_dl/` 的 HTTP 分享服务。QQ 扫码登录和公网端口放行必须由操作者完成；这是外部账号与网络权限，项目不会也不应自动代办。
+
+每次启动前可执行以下只读检查：
+
+```powershell
+.\.venv\Scripts\python.exe .\run_jmniang.py --check
+```
+
+### 手动或 Linux 启动
+
 ```bash
 git clone https://github.com/spdw666/Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi.git
 cd Create-a-QQ-bot-and-add-it-to-the-group-chat-to-easily-search-for-JM-doujinshi
 python -m pip install -r requirements.txt
 
-# 仅示例：生产环境请通过 systemd Environment= 或安全的环境管理方式配置。
-export JM_ZIP_PASSWORD='change-this'
-export JM_PUBLIC_IP='your-public-host'
-python jm_niang.py
+# 复制并填写配置；run_jmniang.py 会自动读取 .env。
+cp .env.example .env
+# 编辑 .env，至少设置 JM_ZIP_PASSWORD 与 JM_PUBLIC_IP。
+python run_jmniang.py
 ```
 
-还需要在 NapCat 中创建**正向 WebSocket 服务端**，监听 `ws://127.0.0.1:8081`。机器人主动连接此地址。
+`run_jmniang.py` 默认托管 `http_dl/` 到 `JM_HTTP_BIND:JM_HTTP_PORT`（默认 `0.0.0.0:8080`），并连接 NapCat 的 `ws://127.0.0.1:8081`。若生产环境已用 Nginx 等服务托管 `http_dl/`，可改用 `python run_jmniang.py --no-http`。
 
 ## 生产部署
 
@@ -175,6 +189,8 @@ python3 -m http.server 8080 --bind 0.0.0.0 --directory /opt/jmniang/http_dl
 |---|---:|---|
 | `JM_ZIP_PASSWORD` | 是 | AES ZIP 密码；需要通过可信渠道告知解压用户。 |
 | `JM_PUBLIC_IP` | 是 | 生成浏览器下载链接的公网 IP 或域名。 |
+| `JM_HTTP_BIND` | 否 | 内置 HTTP 分享服务监听地址；默认 `0.0.0.0`。 |
+| `JM_HTTP_PORT` | 否 | 内置 HTTP 分享服务端口与链接端口；默认 `8080`。 |
 | `JM_PROXY` | 否 | jmcomic 和部分识图源使用的 HTTP 代理。 |
 | `JM_MAX_ZIP_PART_BYTES` | 否 | 单个独立 ZIP 分卷最大字节数；默认 900 MiB，`0` 关闭分卷。 |
 | `JM_ADMIN_USERS` | 否 | 管理员 QQ 号，英文逗号分隔；默认空，管理命令安全禁用。 |
@@ -243,6 +259,9 @@ python -m pytest -q
 jm_niang.py           OneBot 消息路由、队列、上传、订阅与运维命令
 jm_download.py        jmcomic 下载、章节、AES ZIP、分卷、搜索和识图
 jm_store.py           SQLite 任务、历史、收藏与订阅存储
+run_jmniang.py        .env 加载、启动前检查与本地 HTTP 分享服务
+start_jmniang.bat     Windows 一键启动入口
+scripts/              Windows 启动与首次依赖安装脚本
 deploy.py             带维护应答器和校验的部署脚本
 maintain_reply.py     升级窗口的临时应答器
 napcat_watchdog.sh    NapCat 端口看门狗
@@ -254,6 +273,7 @@ docs/                 路线图与故障档案
 ## 文档与变更
 
 - [产品路线图](docs/roadmap.md)
+- [Windows 新电脑首次运行](docs/first-run.md)
 - [NapCat/QQ 故障档案](docs/qq-crash-issue.md)
 
 | 日期 | 变更 |

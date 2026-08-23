@@ -96,10 +96,10 @@ QUEUE_RESUME_EVENT = asyncio.Event()
 QUEUE_RESUME_EVENT.set()
 
 # ---------- HTTP 下载链接分享配置 ----------
-# 服务器公网IP与HTTP服务端口（腾讯云轻量控制台需放行该端口）
+# 服务器公网IP与HTTP服务端口（防火墙/安全组需放行该端口）
 # 公网IP通过环境变量 JM_PUBLIC_IP 配置（不写死在代码里，避免泄露）
 PUBLIC_IP = os.environ.get('JM_PUBLIC_IP', '127.0.0.1')
-HTTP_PORT = 8080
+HTTP_PORT = int(os.environ.get('JM_HTTP_PORT', '8080'))
 HTTP_BASE_URL = f'http://{PUBLIC_IP}:{HTTP_PORT}'
 # 分享目录（http.server 服务的根目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
