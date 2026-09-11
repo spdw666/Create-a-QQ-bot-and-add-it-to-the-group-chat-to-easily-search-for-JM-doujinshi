@@ -1,0 +1,3 @@
+# 可选本地 OCR：识图增强，不影响机器人、下载、队列或订阅的启动。
+# 安装：.\.venv\Scripts\python.exe -m pip install -r requirements-ocr.txt
+rapidocr_onnxruntime>=1.3

@@ -10,7 +10,7 @@
 [![Tests](https://img.shields.io/badge/tests-46%20passed-brightgreen?style=flat-square)](test_jm_download.py)
 [![License](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
 
-[Windows 一键启动](#windows-一键启动) · [命令速查](#命令速查) · [部署](#生产部署) · [配置](#配置) · [运维](#运维) · [路线图](docs/roadmap.md)
+[Windows 一键启动](#windows-一键启动) · [本地长期运行](docs/local-long-running.md) · [命令速查](#命令速查) · [部署](#生产部署) · [配置](#配置) · [运维](#运维) · [路线图](docs/roadmap.md)
 
 </div>
 
@@ -106,7 +106,11 @@ QQ 群 ── OneBot v11 ── NapCat ── jm_niang.py
 
 新电脑请先完成一次 [首次运行指南](docs/first-run.md)：登录 NapCat，并在本机创建监听 `127.0.0.1:8081` 的 **OneBot v11 正向 WebSocket 服务端**。随后双击根目录 [`start_jmniang.bat`](start_jmniang.bat)。
 
-启动器会自动选择/安装 Python 3.11、创建 `.venv`、按 `requirements.txt` 安装依赖、首次生成本地 `.env`、检查 NapCat，并在同一窗口运行机器人和 `http_dl/` 的 HTTP 分享服务。QQ 扫码登录和公网端口放行必须由操作者完成；这是外部账号与网络权限，项目不会也不应自动代办。
+启动器会自动选择/安装 Python 3.11、创建 `.venv`、按 `requirements.txt` 安装核心依赖、首次生成本地 `.env`、检查 NapCat，并在同一窗口运行机器人和 `http_dl/` 的 HTTP 分享服务。QQ 扫码登录和公网端口放行必须由操作者完成；这是外部账号与网络权限，项目不会也不应自动代办。
+
+本地 OCR 是可选增强，单独列在 `requirements-ocr.txt`；网络不稳定时不会阻塞机器人上线。待网络恢复后运行 `scripts/install_ocr.ps1`，重启并发送 `自查` 确认 OCR 已启用。
+
+需要在一台本地电脑长期运行时，完成首次登录后执行 [`docs/local-long-running.md`](docs/local-long-running.md) 的登录自启动安装步骤。它会以隐藏守护进程持续运行，程序异常时自动重启，并把日志保存到本地 `logs/`。
 
 每次启动前可执行以下只读检查：
 
@@ -274,6 +278,7 @@ docs/                 路线图与故障档案
 
 - [产品路线图](docs/roadmap.md)
 - [Windows 新电脑首次运行](docs/first-run.md)
+- [Windows 本地电脑长期运行](docs/local-long-running.md)
 - [NapCat/QQ 故障档案](docs/qq-crash-issue.md)
 
 | 日期 | 变更 |

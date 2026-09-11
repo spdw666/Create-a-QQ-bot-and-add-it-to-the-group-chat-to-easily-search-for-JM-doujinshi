@@ -21,6 +21,7 @@ import sys
 import time
 import uuid
 import datetime
+import importlib.util
 
 import websockets
 
@@ -794,6 +795,14 @@ def _self_check_napcat_port():
         return False
 
 
+def _self_check_ocr_available():
+    """不加载模型，只检查本地 OCR 运行时的两个必要模块是否安装。"""
+    return bool(
+        importlib.util.find_spec('rapidocr_onnxruntime')
+        and importlib.util.find_spec('onnxruntime')
+    )
+
+
 def render_self_check():
     """一次性汇总进程、NapCat、网络、下载、识图、缓存与持久化状态；绝不显示凭据。"""
     start_txt = datetime.datetime.fromtimestamp(START_TIME).strftime('%m-%d %H:%M:%S')
@@ -811,7 +820,11 @@ def render_self_check():
     lines.append(f'【网络】禁漫域名 DNS {"正常" if _self_check_dns() else "失败"}；本机 WS 仅检测，不发起下载请求')
     usage = shutil.disk_usage(BASE_DIR)
     lines.append(f'【下载】队列 {"暂停" if QUEUE_PAUSED else "运行"}；活跃 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}；磁盘可用 {format_bytes(usage.free)}')
-    image_sources = ['OCR/iQDB']
+    image_sources = ['iQDB']
+    if _self_check_ocr_available():
+        image_sources.insert(0, 'OCR')
+    else:
+        image_sources.append('OCR（未安装）')
     if os.environ.get('JM_SAUCENAO_KEY'):
         image_sources.append('SauceNAO')
     if os.environ.get('JM_LLM_KEY'):

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -7,19 +7,28 @@ $VenvDir = Join-Path $Root '.venv'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 $Requirements = Join-Path $Root 'requirements.txt'
 $Stamp = Join-Path $VenvDir '.requirements.sha256'
+$OcrInstaller = Join-Path $PSScriptRoot 'install_ocr.ps1'
 
 function Find-Python {
     $candidates = @(
         @{ Name = 'py'; Args = @('-3.11') },
         @{ Name = 'py'; Args = @('-3.12') },
         @{ Name = 'py'; Args = @('-3.10') },
+        @{ Name = 'py'; Args = @('-V:Astral/CPython3.11') },
+        @{ Name = 'py'; Args = @('-V:Astral/CPython3.12') },
         @{ Name = 'python'; Args = @() }
     )
     foreach ($candidate in $candidates) {
         $command = Get-Command $candidate.Name -ErrorAction SilentlyContinue
         if (-not $command) { continue }
-        & $command.Source @($candidate.Args) -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $exitCode = 1
+        try {
+            & $command.Source @($candidate.Args) -c 'import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 12) else 1)' 2>$null
+            $exitCode = $LASTEXITCODE
+        } catch {
+            # 缺失的 py 版本会在 Windows PowerShell 中成为 NativeCommandError；继续探测下一个候选。
+        }
+        if ($exitCode -eq 0) {
             return [PSCustomObject]@{ Exe = $command.Source; Args = @($candidate.Args) }
         }
     }
@@ -30,8 +39,14 @@ function Find-Python {
     )
     foreach ($path in $installedPaths) {
         if (-not (Test-Path $path)) { continue }
-        & $path -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $exitCode = 1
+        try {
+            & $path -c 'import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 12) else 1)' 2>$null
+            $exitCode = $LASTEXITCODE
+        } catch {
+            continue
+        }
+        if ($exitCode -eq 0) {
             return [PSCustomObject]@{ Exe = $path; Args = @() }
         }
     }
@@ -52,6 +67,18 @@ function Invoke-Checked([string]$Exe, [string[]]$Arguments, [string]$Action) {
     }
 }
 
+function Get-Sha256([string]$Path) {
+    # 不依赖 Get-FileHash，兼容裁剪版或较旧的 Windows PowerShell。
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        return ([System.BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '')
+    } finally {
+        $stream.Dispose()
+        $hasher.Dispose()
+    }
+}
+
 function Set-EnvValue([string]$Content, [string]$Name, [string]$Value) {
     $escapedName = [regex]::Escape($Name)
     return [regex]::Replace($Content, "(?m)^$escapedName=.*$", "$Name=$Value")
@@ -62,7 +89,7 @@ $Python = Find-Python
 if (-not $Python) {
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if (-not $winget) {
-        throw '未找到 Python 3.10+ 或 winget。请安装 Python 3.11（勾选 Add Python to PATH）后重新双击本文件。'
+        throw '未找到受支持的 Python 3.10–3.12 或 winget。请安装 Python 3.11（勾选 Add Python to PATH）后重新双击本文件。'
     }
     Write-Host '正在通过 winget 安装 Python 3.11…' -ForegroundColor Yellow
     Invoke-Checked $winget.Source @('install', '--exact', '--id', 'Python.Python.3.11', '--accept-package-agreements', '--accept-source-agreements') 'Python 安装'
@@ -77,13 +104,23 @@ if (-not (Test-Path $VenvPython)) {
     Invoke-Checked $Python.Exe (@($Python.Args) + @('-m', 'venv', $VenvDir)) '创建 Python 虚拟环境'
 }
 
-$requirementsHash = (Get-FileHash -Algorithm SHA256 $Requirements).Hash
+$requirementsHash = Get-Sha256 $Requirements
 $installedHash = if (Test-Path $Stamp) { (Get-Content $Stamp -Raw).Trim() } else { '' }
 if ($requirementsHash -ne $installedHash) {
-    Write-Host '正在安装或更新项目依赖（首次可能需数分钟）…' -ForegroundColor Cyan
-    Invoke-Checked $VenvPython @('-m', 'pip', 'install', '--upgrade', 'pip') '升级 pip'
+    Write-Host '正在安装机器人核心依赖（首次可能需数分钟）…' -ForegroundColor Cyan
     Invoke-Checked $VenvPython @('-m', 'pip', 'install', '-r', $Requirements) '安装项目依赖'
     Set-Content -LiteralPath $Stamp -Value $requirementsHash -Encoding ascii -NoNewline
+}
+
+$ocrReady = $false
+try {
+    & $VenvPython -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('rapidocr_onnxruntime') and importlib.util.find_spec('onnxruntime') else 1)" 2>$null
+    $ocrReady = ($LASTEXITCODE -eq 0)
+} catch {
+    $ocrReady = $false
+}
+if (-not $ocrReady) {
+    Write-Host "提示：本地 OCR 运行时尚未安装；机器人其余功能可正常启动。网络稳定后运行：$OcrInstaller" -ForegroundColor Yellow
 }
 
 $EnvPath = Join-Path $Root '.env'

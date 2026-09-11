@@ -13,6 +13,7 @@ downloads/
 http_dl/
 *.log
 jm_niang_run.log
+logs/
 data/
 
 # NapCat runtime & config (contains QQ account config) — never commit
