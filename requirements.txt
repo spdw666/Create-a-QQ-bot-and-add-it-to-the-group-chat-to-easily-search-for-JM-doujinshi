@@ -1,5 +1,6 @@
 jmcomic==2.7.4
-websockets>=12.0
+# 15 起会自动读取代理环境变量；本机 NapCat 连接显式传 proxy=None 绕过代理。
+websockets>=15.0
 pyzipper>=0.3.6
 zhconv>=1.4.3
 requests>=2.28

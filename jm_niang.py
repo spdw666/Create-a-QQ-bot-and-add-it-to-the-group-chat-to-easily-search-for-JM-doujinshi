@@ -2473,7 +2473,8 @@ async def main():
     # 断线自动重连
     while True:
         try:
-            async with websockets.connect(uri, ping_interval=None) as ws:
+            # NapCat 位于本机回环地址，绝不能经系统 HTTP/HTTPS 代理转发。
+            async with websockets.connect(uri, ping_interval=None, proxy=None) as ws:
                 await handle_connection(ws)
         except Exception as e:
             log(f'连接断开/失败: {e!r}，5秒后重连…')
