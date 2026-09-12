@@ -97,7 +97,7 @@ class QuietFileHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def start_share_server(settings: RuntimeSettings) -> http.server.ThreadingHTTPServer | None:
-    share_dir = BASE_DIR / 'http_dl'
+    share_dir = Path(os.environ.get('JM_SHARE_DIR', BASE_DIR / 'http_dl')).expanduser().resolve()
     share_dir.mkdir(parents=True, exist_ok=True)
     handler = functools.partial(QuietFileHandler, directory=str(share_dir))
     try:

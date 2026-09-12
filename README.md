@@ -112,6 +112,8 @@ QQ 群 ── OneBot v11 ── NapCat ── jm_niang.py
 
 需要在一台本地电脑长期运行时，完成首次登录后执行 [`docs/local-long-running.md`](docs/local-long-running.md) 的登录自启动安装步骤。它会以隐藏守护进程持续运行，程序异常时自动重启，并把日志保存到本地 `logs/`。
 
+下载 ZIP 和 HTTP 分享缓存默认放在项目内的 `downloads/`、`http_dl/`。若 C 盘空间有限，可在本地 `.env` 设置 `JM_DOWNLOAD_DIR`、`JM_SHARE_DIR` 为另一块磁盘的绝对路径；`自查` 会显示下载目录所在磁盘的可用空间。不要将这些本机路径或缓存提交到 Git。
+
 每次启动前可执行以下只读检查：
 
 ```powershell

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from run_jmniang import load_local_env, parse_env_text, validate_settings
+from run_jmniang import RuntimeSettings, load_local_env, parse_env_text, start_share_server, validate_settings
 
 
 def test_parse_env_text_accepts_comments_quotes_and_export():
@@ -56,3 +56,16 @@ def test_validate_settings_rejects_invalid_http_port():
             'JM_PUBLIC_IP': 'example.test',
             'JM_HTTP_PORT': '99999',
         })
+
+
+def test_start_share_server_uses_configured_external_cache_directory(tmp_path, monkeypatch):
+    share_dir = tmp_path / 'large-drive-share'
+    monkeypatch.setenv('JM_SHARE_DIR', str(share_dir))
+    server = start_share_server(RuntimeSettings('127.0.0.1', '127.0.0.1', 0))
+    try:
+        assert server is not None
+        assert share_dir.is_dir()
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()

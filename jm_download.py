@@ -44,7 +44,13 @@ _patch_zip_store()
 
 # 下载根目录（与脚本同级）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DOWNLOAD_DIR = os.path.join(BASE_DIR, 'downloads')
+# 可用 JM_DOWNLOAD_DIR 将大文件缓存迁到其他磁盘；默认保持项目内 downloads/。
+DOWNLOAD_DIR = os.path.abspath(os.path.expanduser(os.environ.get(
+    'JM_DOWNLOAD_DIR', os.path.join(BASE_DIR, 'downloads'),
+)))
+SHARE_DIR = os.path.abspath(os.path.expanduser(os.environ.get(
+    'JM_SHARE_DIR', os.path.join(BASE_DIR, 'http_dl'),
+)))
 
 # 图片扩展名（用于统计进度）
 IMAGE_SUFFIXES = ('.jpg', '.jpeg', '.webp', '.png', '.gif')
@@ -180,7 +186,8 @@ def _ascii2d_search_via_firecrawl(img_bytes):
     try:
         h = hashlib.sha256(img_bytes).hexdigest()[:8]
         img_name = 'ris_%s.jpg' % h
-        img_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'http_dl', img_name)
+        os.makedirs(SHARE_DIR, exist_ok=True)
+        img_path = os.path.join(SHARE_DIR, img_name)
         with open(img_path, 'wb') as f:
             f.write(img_bytes)
         pub = os.environ.get('JM_PUBLIC_IP', '').strip()

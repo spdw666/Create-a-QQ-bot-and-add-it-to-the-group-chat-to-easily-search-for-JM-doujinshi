@@ -104,7 +104,9 @@ HTTP_PORT = int(os.environ.get('JM_HTTP_PORT', '8080'))
 HTTP_BASE_URL = f'http://{PUBLIC_IP}:{HTTP_PORT}'
 # 分享目录（http.server 服务的根目录）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SHARE_DIR = os.path.join(BASE_DIR, 'http_dl')
+SHARE_DIR = os.path.abspath(os.path.expanduser(os.environ.get(
+    'JM_SHARE_DIR', os.path.join(BASE_DIR, 'http_dl'),
+)))
 
 # 禁漫天堂 APP 安装包（用户发"安装包"等关键词时加密上传到群文件）
 APK_DIR = os.path.join(BASE_DIR, 'apk')
@@ -818,7 +820,7 @@ def render_self_check():
     if secs is not None:
         lines.append(f'【QQ】进程已存活 {_fmt_duration(secs)}')
     lines.append(f'【网络】禁漫域名 DNS {"正常" if _self_check_dns() else "失败"}；本机 WS 仅检测，不发起下载请求')
-    usage = shutil.disk_usage(BASE_DIR)
+    usage = shutil.disk_usage(DOWNLOAD_DIR)
     lines.append(f'【下载】队列 {"暂停" if QUEUE_PAUSED else "运行"}；活跃 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}；磁盘可用 {format_bytes(usage.free)}')
     image_sources = ['iQDB']
     if _self_check_ocr_available():
@@ -897,7 +899,7 @@ async def render_admin_status():
     """管理员诊断：只展示机器人任务元数据与本机资源，不含用户聊天内容/凭据。"""
     stats = await asyncio.to_thread(get_store_stats)
     jobs = await asyncio.to_thread(list_active_jobs_all)
-    usage = shutil.disk_usage(BASE_DIR)
+    usage = shutil.disk_usage(DOWNLOAD_DIR)
     lines = [
         '🛠️ 管理诊断',
         f'· 队列：{"已暂停" if QUEUE_PAUSED else "运行中"}；全局并发 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}',
