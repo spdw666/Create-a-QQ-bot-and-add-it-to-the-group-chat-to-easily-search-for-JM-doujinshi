@@ -139,6 +139,14 @@ if (-not (Test-Path $EnvPath)) {
 if ($LASTEXITCODE -eq 3) {
     Write-Host ''
     Write-Host 'NapCat 尚未就绪：请登录 QQ，并在 NapCat 创建正向 WebSocket 服务端 ws://127.0.0.1:8081。' -ForegroundColor Yellow
+    Write-Host '本启动器不会启动、注入、修补或结束 QQ/NapCat；请先自行确认该 QQ 版本受 NapCat 支持。' -ForegroundColor Yellow
+    $compatibilityCheck = Join-Path $Root 'scripts\check_napcat_compatibility.ps1'
+    if (Test-Path -LiteralPath $compatibilityCheck) {
+        & $compatibilityCheck
+        if ($LASTEXITCODE -eq 2) {
+            Write-Host '已因已知不兼容 QQ 版本安全停止；请勿反复尝试 NapCat 注入。' -ForegroundColor Red
+        }
+    }
     Write-Host '详细步骤：docs\first-run.md' -ForegroundColor Yellow
     exit 3
 }

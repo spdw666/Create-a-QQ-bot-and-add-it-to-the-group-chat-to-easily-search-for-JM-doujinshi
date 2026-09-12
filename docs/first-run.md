@@ -6,11 +6,13 @@
 
 QQ/NapCat 的登录和公网网络配置无法由项目自动完成：需要操作者本人扫码/登录 QQ，且如果希望群成员使用机器人给出的浏览器链接，需让公网能够访问本机的 HTTP 端口。
 
-1. 安装并登录 [NapCat](https://napneko.github.io/)；使用专门的机器人 QQ 账号。
+1. 安装并登录 [NapCat](https://napneko.github.io/)；使用专门的机器人 QQ 账号，并先确认该 QQ 客户端版本受当前 NapCat 支持。JM娘不提供 QQ 注入、修补或降级功能。
 2. 在 NapCat 创建 **OneBot v11 正向 WebSocket 服务端**，监听地址填写 `127.0.0.1`、端口填写 `8081`。这是机器人连接 NapCat 的固定本地地址。
 3. 若需要浏览器下载链接，在防火墙/路由器/云安全组中放行 TCP `8080`，并准备公网 IP 或域名。仅测试群文件上传时可跳过这一步。
 
 > 不要把 QQ 密码、二维码、token、Cookie 或 `.env` 提交到 Git 或发到群里。
+
+> **先做兼容性预检。** 在人工启动 NapCat 前运行 `./scripts/check_napcat_compatibility.ps1`。它只读取 QQ 的文件版本；若提示“安全阻止”，不要反复启动 NapCat 或按 QQ 的“文件已损坏”提示重装。先以普通方式启动 QQ，确认日常客户端仍正常，再换用经 NapCat 官方验证的独立兼容环境。项目启动器不会对 QQ 做任何写入。
 
 ## 一键启动
 
@@ -50,6 +52,7 @@ QQ/NapCat 的登录和公网网络配置无法由项目自动完成：需要操�
 |---|---|
 | 脚本提示找不到 Python | 安装 Python 3.11 并勾选 PATH，或让 `winget` 完成安装后重新双击。 |
 | 脚本提示 NapCat 不可达 | 确认 QQ 已登录，且 NapCat 的服务类型是“正向 WebSocket 服务端”、地址 `127.0.0.1`、端口 `8081`。 |
+| QQ 在启动 NapCat 后提示“文件已损坏” | 立即停止该次 NapCat 启动；普通方式重开 QQ 验证客户端。不要让机器人项目反复注入。运行 `scripts/check_napcat_compatibility.ps1`，并仅使用 NapCat 当前明确支持的 QQ 版本。 |
 | 群文件可收到，浏览器链接打不开 | 检查 `.env` 的公网地址、Windows 防火墙、路由器端口转发或云安全组的 TCP `8080`。 |
 | 8080 端口被占用 | 修改 `JM_HTTP_PORT`，同时在网络侧放行新端口；或用 Nginx 托管仓库的 `http_dl/` 目录。 |
 | 启动后访问站点失败 | 按需设置 `JM_PROXY`，然后重启。 |

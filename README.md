@@ -104,9 +104,9 @@ QQ 群 ── OneBot v11 ── NapCat ── jm_niang.py
 
 ### Windows 一键启动
 
-新电脑请先完成一次 [首次运行指南](docs/first-run.md)：登录 NapCat，并在本机创建监听 `127.0.0.1:8081` 的 **OneBot v11 正向 WebSocket 服务端**。随后双击根目录 [`start_jmniang.bat`](start_jmniang.bat)。
+新电脑请先完成一次 [首次运行指南](docs/first-run.md)：使用**与当前 NapCat 版本兼容**的 QQ/NapCat 组合完成登录，并在本机创建监听 `127.0.0.1:8081` 的 **OneBot v11 正向 WebSocket 服务端**。随后双击根目录 [`start_jmniang.bat`](start_jmniang.bat)。
 
-启动器会自动选择/安装 Python 3.11、创建 `.venv`、按 `requirements.txt` 安装核心依赖、首次生成本地 `.env`、检查 NapCat，并在同一窗口运行机器人和 `http_dl/` 的 HTTP 分享服务。QQ 扫码登录和公网端口放行必须由操作者完成；这是外部账号与网络权限，项目不会也不应自动代办。
+启动器会自动选择/安装 Python 3.11、创建 `.venv`、按 `requirements.txt` 安装核心依赖、首次生成本地 `.env`、检查 NapCat，并在同一窗口运行机器人和 `http_dl/` 的 HTTP 分享服务。它**不会**启动、注入、修补或结束 QQ/NapCat；QQ 扫码登录、QQ/NapCat 版本兼容性与公网端口放行必须由操作者完成。这避免机器人启动器意外触发 QQ 的完整性校验。
 
 本地 OCR 是可选增强，单独列在 `requirements-ocr.txt`；网络不稳定时不会阻塞机器人上线。待网络恢复后运行 `scripts/install_ocr.ps1`，重启并发送 `自查` 确认 OCR 已启用。
 
@@ -116,6 +116,8 @@ QQ 群 ── OneBot v11 ── NapCat ── jm_niang.py
 
 ```powershell
 .\.venv\Scripts\python.exe .\run_jmniang.py --check
+# 只读：读取本机 QQ 版本；命中项目已知不兼容版本时会明确阻止人工注入。
+.\scripts\check_napcat_compatibility.ps1
 ```
 
 ### 手动或 Linux 启动
