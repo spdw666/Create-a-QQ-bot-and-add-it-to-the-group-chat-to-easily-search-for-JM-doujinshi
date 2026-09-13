@@ -32,7 +32,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\install_autostart.ps1
 ```
 
-它会为**当前 Windows 用户**在“登录后启动”目录创建一个快捷方式，不需要管理员权限。后台守护进程会：
+它会为**当前 Windows 用户**注册“登录后运行”的 Windows 计划任务，不需要管理员权限。计划任务的动作是项目内的纯 `cmd` 启动器；不使用启动目录快捷方式、VBS、`wscript` 或 PowerShell 作为登录时动作，因此比“`.lnk` → 脚本解释器”的自启动方式更不容易被安全软件按启发式规则误杀。后台守护进程会：
 
 - 以 `.venv` 中的固定 Python 启动 `run_jmniang.py`；
 - 托管 `http_dl/` 的 HTTP 分享目录；
@@ -48,7 +48,7 @@ NapCat/QQ 本身也必须设置为登录后自动启动；否则 JM娘 会运行
 
 若使用独立的便携 NapCat 运行时，守护器应只管理该隔离运行时：连续多次健康检查失败后、并满足冷却时间才重启它。**不得**用端口检测失败为由结束或修改日常桌面 QQ，否则会把正常的启动、扫码或短暂重连误判为故障。
 
-取消登录自启动：
+取消登录自启动（同时会清理项目旧版的同名启动目录快捷方式）：
 
 ```powershell
 .\scripts\remove_autostart.ps1

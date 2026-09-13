@@ -1,8 +1,8 @@
 ﻿[CmdletBinding()]
 param()
 
-# 本地长期运行守护：机器人异常退出后等待 10 秒再拉起。
-# 由 start_background.vbs/Windows 启动目录调用；无需管理员权限。
+# 旧版 PowerShell 守护器，保留给手动维护场景。
+# 登录自启动请使用 install_autostart.ps1：它注册计划任务并由 run_local_watchdog.cmd 执行。
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $Root '.venv\Scripts\python.exe'

@@ -110,7 +110,7 @@ QQ 群 ── OneBot v11 ── NapCat ── jm_niang.py
 
 本地 OCR 是可选增强，单独列在 `requirements-ocr.txt`；网络不稳定时不会阻塞机器人上线。待网络恢复后运行 `scripts/install_ocr.ps1`，重启并发送 `自查` 确认 OCR 已启用。
 
-需要在一台本地电脑长期运行时，完成首次登录后执行 [`docs/local-long-running.md`](docs/local-long-running.md) 的登录自启动安装步骤。它会以隐藏守护进程持续运行，程序异常时自动重启，并把日志保存到本地 `logs/`。
+需要在一台本地电脑长期运行时，完成首次登录后执行 [`docs/local-long-running.md`](docs/local-long-running.md) 的登录自启动安装步骤。它会为当前用户注册普通权限的计划任务，以 `cmd` 启动器持续运行、异常后自动重启，并把日志保存到本地 `logs/`；不会使用启动目录快捷方式或修改 QQ/NapCat。
 
 下载 ZIP 和 HTTP 分享缓存默认放在项目内的 `downloads/`、`http_dl/`。若 C 盘空间有限，可在本地 `.env` 设置 `JM_DOWNLOAD_DIR`、`JM_SHARE_DIR` 为另一块磁盘的绝对路径；`自查` 会显示下载目录所在磁盘的可用空间。不要将这些本机路径或缓存提交到 Git。
 
