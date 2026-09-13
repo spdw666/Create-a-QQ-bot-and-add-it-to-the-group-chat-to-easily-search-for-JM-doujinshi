@@ -17,6 +17,21 @@ def test_zip_encrypt_constants():
     assert ZIP_PASSWORD == TEST_PASSWORD
 
 
+def test_cache_disk_usage_creates_configured_download_directory(tmp_path, monkeypatch):
+    import jm_niang
+    cache_dir = tmp_path / 'mounted-later' / 'downloads'
+    monkeypatch.setattr(jm_niang, 'DOWNLOAD_DIR', str(cache_dir))
+    usage = jm_niang._cache_disk_usage()
+    assert usage is not None
+    assert cache_dir.is_dir()
+
+
+def test_self_check_survives_temporarily_unavailable_cache_volume(monkeypatch):
+    import jm_niang
+    monkeypatch.setattr(jm_niang, '_cache_disk_usage', lambda: None)
+    assert '缓存盘暂不可用' in jm_niang.render_self_check()
+
+
 def test_is_zip_encrypted_false(tmp_path):
     """未加密 ZIP 应返回 False"""
     from jm_download import is_zip_encrypted

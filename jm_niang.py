@@ -781,6 +781,20 @@ def _self_check_cache_stats():
     return zip_count, zip_bytes, share_count, share_bytes
 
 
+def _cache_disk_usage():
+    """Ensure the configured download cache directory exists before measuring it.
+
+    A secondary Windows drive can be mounted slightly after user logon.  Health
+    reporting must never fail just because the first cache directory has not
+    been created yet or the configured volume is temporarily unavailable.
+    """
+    try:
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        return shutil.disk_usage(DOWNLOAD_DIR)
+    except OSError:
+        return None
+
+
 def _self_check_dns():
     try:
         socket.getaddrinfo('18comic.vip', 443, type=socket.SOCK_STREAM)
@@ -820,8 +834,9 @@ def render_self_check():
     if secs is not None:
         lines.append(f'【QQ】进程已存活 {_fmt_duration(secs)}')
     lines.append(f'【网络】禁漫域名 DNS {"正常" if _self_check_dns() else "失败"}；本机 WS 仅检测，不发起下载请求')
-    usage = shutil.disk_usage(DOWNLOAD_DIR)
-    lines.append(f'【下载】队列 {"暂停" if QUEUE_PAUSED else "运行"}；活跃 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}；磁盘可用 {format_bytes(usage.free)}')
+    usage = _cache_disk_usage()
+    disk_text = format_bytes(usage.free) if usage else '缓存盘暂不可用'
+    lines.append(f'【下载】队列 {"暂停" if QUEUE_PAUSED else "运行"}；活跃 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}；磁盘可用 {disk_text}')
     image_sources = ['iQDB']
     if _self_check_ocr_available():
         image_sources.insert(0, 'OCR')
@@ -899,11 +914,13 @@ async def render_admin_status():
     """管理员诊断：只展示机器人任务元数据与本机资源，不含用户聊天内容/凭据。"""
     stats = await asyncio.to_thread(get_store_stats)
     jobs = await asyncio.to_thread(list_active_jobs_all)
-    usage = shutil.disk_usage(DOWNLOAD_DIR)
+    usage = _cache_disk_usage()
+    disk_text = (f'可用 {format_bytes(usage.free)} / 总计 {format_bytes(usage.total)}'
+                 if usage else '缓存盘暂不可用')
     lines = [
         '🛠️ 管理诊断',
         f'· 队列：{"已暂停" if QUEUE_PAUSED else "运行中"}；全局并发 {len(ACTIVE_TASKS)}/{MAX_CONCURRENT_DOWNLOADS}；等待 {max(0, DOWNLOAD_QUEUE - len(ACTIVE_TASKS))}',
-        f'· 磁盘：可用 {format_bytes(usage.free)} / 总计 {format_bytes(usage.total)}',
+        f'· 磁盘：{disk_text}',
         f'· 持久化任务：{stats.get("jobs", {})}；订阅 {stats.get("subscriptions", 0)} 项',
         f'· 进程：已运行 {_fmt_duration(time.time() - START_TIME)}；NapCat {"已连接" if CUR_CONN_TIME else "未连接"}',
     ]
