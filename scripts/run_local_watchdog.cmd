@@ -9,17 +9,7 @@ set "PYTHON=%ROOT%\.venv\Scripts\python.exe"
 set "BOT=%ROOT%\run_jmniang.py"
 set "LOG_DIR=%ROOT%\logs"
 set "LOG=%LOG_DIR%\jmniang-local.log"
-rem Interactive scheduled tasks can occasionally inherit an incomplete
-rem LOCALAPPDATA environment.  Prefer it when usable, then derive the same
-rem per-user Local path from this checked-out Roaming workspace as a fallback.
-set "NAPCAT_ROOT=%LOCALAPPDATA%\JM-Niang-runtime\NapCatPortable"
-if not exist "%NAPCAT_ROOT%\node.exe" (
-    for %%I in ("%ROOT%\..\..\..\..\..") do set "JMNIANG_USER_HOME=%%~fI"
-    set "NAPCAT_ROOT=!JMNIANG_USER_HOME!\AppData\Local\JM-Niang-runtime\NapCatPortable"
-)
-set "NAPCAT_NODE=%NAPCAT_ROOT%\node.exe"
-set "NAPCAT_PROFILE_DIR=%NAPCAT_ROOT%\napcat\config"
-set "NAPCAT_LOG=%NAPCAT_ROOT%\logs\scheduled-napcat.log"
+set "NAPCAT_LAUNCHER=%ROOT%\scripts\launch_portable_napcat.py"
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" 2>nul
 if not exist "%PYTHON%" (
@@ -30,13 +20,16 @@ if not exist "%ROOT%\.env" (
     >> "%LOG%" echo [%date% %time%] [ERROR] 未找到 .env，请先运行 start_jmniang.bat 完成首次配置。
     exit /b 3
 )
+if not exist "%NAPCAT_LAUNCHER%" (
+    >> "%LOG%" echo [%date% %time%] [ERROR] 未找到隔离 NapCat 启动器。
+    exit /b 4
+)
 
-rem The dedicated NapCat logon task can be rejected by Task Scheduler before
-rem cmd.exe reaches its script.  The bot's own logon task is known-good, so
-rem it also performs this small, idempotent local 8081 recovery before Python
-rem starts.  It only touches JM娘's per-user isolated runtime.
+rem The bot task is the known-good login entry point.  It performs a small,
+rem idempotent local 8081 recovery before Python starts, using the project
+rem Python launcher so child Node does not inherit this cmd console.
 if /i "%~1"=="--preflight" (
-    call :preflight
+    "%PYTHON%" -X utf8 "%NAPCAT_LAUNCHER%" --preflight >nul 2>&1
     exit /b !ERRORLEVEL!
 )
 
@@ -55,45 +48,7 @@ goto restart
 if not errorlevel 1 (
     goto :eof
 )
-
-if not exist "%NAPCAT_NODE%" (
-    >> "%LOG%" echo [%date% %time%] [WARN] 未找到便携 NapCat node.exe，跳过本地恢复。
-    goto :eof
-)
-if not exist "%NAPCAT_ROOT%\index.js" (
-    >> "%LOG%" echo [%date% %time%] [WARN] 未找到便携 NapCat index.js，跳过本地恢复。
-    goto :eof
-)
-if not exist "%NAPCAT_PROFILE_DIR%" (
-    >> "%LOG%" echo [%date% %time%] [WARN] 未找到便携 NapCat 配置目录，跳过本地恢复。
-    goto :eof
-)
-
-set "NAPCAT_ACCOUNT="
-for /f "usebackq delims=" %%F in (`dir /b /a-d "%NAPCAT_PROFILE_DIR%\napcat_*.json" 2^>nul ^| %SystemRoot%\System32\findstr.exe /r /x "napcat_[0-9][0-9]*\.json"`) do (
-    set "NAPCAT_PROFILE=%%~nF"
-    set "NAPCAT_ACCOUNT=!NAPCAT_PROFILE:napcat_=!"
-    goto :napcat_profile_found
-)
->> "%LOG%" echo [%date% %time%] [WARN] 未找到便携 NapCat 登录配置，跳过本地恢复。
+"%PYTHON%" -X utf8 "%NAPCAT_LAUNCHER%" --ensure >nul 2>&1
+set "NAPCAT_START_CODE=!ERRORLEVEL!"
+if not "%NAPCAT_START_CODE%"=="0" >> "%LOG%" echo [%date% %time%] [WARN] 隔离 NapCat 启动器返回 %NAPCAT_START_CODE%。
 goto :eof
-
-:napcat_profile_found
-if not exist "%NAPCAT_ROOT%\logs" mkdir "%NAPCAT_ROOT%\logs" 2>nul
-pushd "%NAPCAT_ROOT%" || (
-    >> "%LOG%" echo [%date% %time%] [WARN] 无法进入便携 NapCat 目录，跳过本地恢复。
-    goto :eof
-)
->> "%LOG%" echo [%date% %time%] [INFO] 8081 不可用，启动隔离的便携 NapCat 恢复连接。
-start "" /b "%NAPCAT_NODE%" ".\index.js" -q "%NAPCAT_ACCOUNT%" >> "%NAPCAT_LOG%" 2>&1
-set "NAPCAT_START_CODE=%ERRORLEVEL%"
-popd
-if not "%NAPCAT_START_CODE%"=="0" >> "%LOG%" echo [%date% %time%] [WARN] 便携 NapCat 启动命令返回 %NAPCAT_START_CODE%。
-goto :eof
-
-:preflight
-if not exist "%NAPCAT_NODE%" exit /b 4
-if not exist "%NAPCAT_ROOT%\index.js" exit /b 5
-if not exist "%NAPCAT_PROFILE_DIR%" exit /b 6
-for /f "usebackq delims=" %%F in (`dir /b /a-d "%NAPCAT_PROFILE_DIR%\napcat_*.json" 2^>nul ^| %SystemRoot%\System32\findstr.exe /r /x "napcat_[0-9][0-9]*\.json"`) do exit /b 0
-exit /b 7

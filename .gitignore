@@ -19,6 +19,7 @@ data/
 # NapCat runtime & config (contains QQ account config) — never commit
 napcat/
 napcat-shell/
+.jmniang-runtime/
 
 # Bot login QR / other artifacts
 qrcode.png
