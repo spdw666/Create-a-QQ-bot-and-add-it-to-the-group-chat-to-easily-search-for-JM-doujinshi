@@ -1,0 +1,4 @@
+# Windows cmd.exe misparses LF-only batch files in scheduled tasks.
+# Keep launchers checked out with CRLF on every Windows clone/update.
+*.cmd text eol=crlf
+*.bat text eol=crlf
