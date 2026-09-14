@@ -8,14 +8,18 @@ import re
 import socket
 import subprocess
 import sys
+import time
 
 
 PROFILE_NAME = re.compile(r"^napcat_(\d+)\.json$")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCK_DIRECTORY = PROJECT_ROOT / ".jmniang-runtime" / "napcat-launch.lock"
+LOCK_STALE_AFTER_SECONDS = 90
+STARTUP_TIMEOUT_SECONDS = 30
 
 
 def candidate_runtime_roots() -> list[Path]:
-    project_root = Path(__file__).resolve().parents[1]
-    candidates: list[Path] = [project_root / ".jmniang-runtime" / "NapCatPortable"]
+    candidates: list[Path] = [PROJECT_ROOT / ".jmniang-runtime" / "NapCatPortable"]
     app_data = os.environ.get("APPDATA")
     if app_data:
         candidates.append(Path(app_data) / "JM-Niang-runtime" / "NapCatPortable")
@@ -56,6 +60,44 @@ def port_is_listening() -> bool:
         return False
 
 
+def wait_for_port(timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if port_is_listening():
+            return True
+        time.sleep(0.5)
+    return port_is_listening()
+
+
+def acquire_launch_lock() -> bool:
+    """Acquire the shared launch lock, or wait while another task starts NapCat."""
+    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if port_is_listening():
+            return False
+        try:
+            LOCK_DIRECTORY.mkdir()
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - LOCK_DIRECTORY.stat().st_mtime > LOCK_STALE_AFTER_SECONDS:
+                    LOCK_DIRECTORY.rmdir()
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.5)
+        except OSError:
+            return False
+    return False
+
+
+def release_launch_lock() -> None:
+    try:
+        LOCK_DIRECTORY.rmdir()
+    except OSError:
+        pass
+
+
 def start(runtime_root: Path, account: str) -> int:
     flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     try:
@@ -73,6 +115,25 @@ def start(runtime_root: Path, account: str) -> int:
     return 0
 
 
+def ensure_started(runtime_root: Path, account: str) -> int:
+    if port_is_listening():
+        return 0
+
+    owns_lock = acquire_launch_lock()
+    if not owns_lock:
+        return 0 if wait_for_port(STARTUP_TIMEOUT_SECONDS) else 7
+
+    try:
+        if port_is_listening():
+            return 0
+        result = start(runtime_root, account)
+        if result:
+            return result
+        return 0 if wait_for_port(STARTUP_TIMEOUT_SECONDS) else 7
+    finally:
+        release_launch_lock()
+
+
 def main() -> int:
     if len(sys.argv) != 2 or sys.argv[1] not in {"--preflight", "--ensure"}:
         return 2
@@ -83,8 +144,7 @@ def main() -> int:
         return 5
     if mode == "--preflight":
         return 0
-    port_ready = port_is_listening()
-    return 0 if port_ready else start(*runtime)
+    return ensure_started(*runtime)
 
 
 if __name__ == "__main__":
