@@ -2,7 +2,8 @@
 param()
 
 # 旧版 PowerShell 守护器，保留给手动维护场景。
-# 登录自启动请使用 install_autostart.ps1：它注册计划任务并由 run_local_watchdog.cmd 执行。
+# 旧版 PowerShell 守护器，仅保留给手动维护；登录任务改由 pythonw.exe 执行
+# run_local_watchdog.py，不使用 PowerShell、cmd、VBS 或 wscript 启动链。
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $Root '.venv\Scripts\python.exe'

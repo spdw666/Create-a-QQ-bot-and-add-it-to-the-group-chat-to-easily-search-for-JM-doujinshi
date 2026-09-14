@@ -99,7 +99,13 @@ def release_launch_lock() -> None:
 
 
 def start(runtime_root: Path, account: str) -> int:
-    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    # A console-subsystem node.exe otherwise creates a visible console at
+    # interactive logon.  It does not need to inherit a console to outlive
+    # this short-lived launcher.
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
     try:
         subprocess.Popen(
             [str(runtime_root / "node.exe"), "index.js", "-q", account],
@@ -109,6 +115,7 @@ def start(runtime_root: Path, account: str) -> int:
             stderr=subprocess.DEVNULL,
             creationflags=flags,
             close_fds=True,
+            startupinfo=startupinfo,
         )
     except OSError:
         return 6

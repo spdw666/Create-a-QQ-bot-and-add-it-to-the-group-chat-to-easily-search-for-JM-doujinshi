@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-rem This is intentionally a plain cmd launcher so the logon task does not use
-rem a startup-folder shortcut, VBS, wscript, or PowerShell.
+rem Compatibility launcher for manual maintenance. The logon task uses
+rem run_local_watchdog.py through pythonw.exe so it does not show a cmd window.
 set "ROOT=%~dp0.."
 for %%I in ("%ROOT%") do set "ROOT=%%~fI"
 set "PYTHON=%ROOT%\.venv\Scripts\python.exe"
