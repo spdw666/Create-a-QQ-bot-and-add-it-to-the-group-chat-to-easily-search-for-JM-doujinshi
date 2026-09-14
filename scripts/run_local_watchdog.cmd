@@ -9,7 +9,14 @@ set "PYTHON=%ROOT%\.venv\Scripts\python.exe"
 set "BOT=%ROOT%\run_jmniang.py"
 set "LOG_DIR=%ROOT%\logs"
 set "LOG=%LOG_DIR%\jmniang-local.log"
+rem Interactive scheduled tasks can occasionally inherit an incomplete
+rem LOCALAPPDATA environment.  Prefer it when usable, then derive the same
+rem per-user Local path from this checked-out Roaming workspace as a fallback.
 set "NAPCAT_ROOT=%LOCALAPPDATA%\JM-Niang-runtime\NapCatPortable"
+if not exist "%NAPCAT_ROOT%\node.exe" (
+    for %%I in ("%ROOT%\..\..\..\..\..") do set "JMNIANG_USER_HOME=%%~fI"
+    set "NAPCAT_ROOT=!JMNIANG_USER_HOME!\AppData\Local\JM-Niang-runtime\NapCatPortable"
+)
 set "NAPCAT_NODE=%NAPCAT_ROOT%\node.exe"
 set "NAPCAT_PROFILE_DIR=%NAPCAT_ROOT%\napcat\config"
 set "NAPCAT_LOG=%NAPCAT_ROOT%\logs\scheduled-napcat.log"
@@ -27,9 +34,13 @@ if not exist "%ROOT%\.env" (
 rem The dedicated NapCat logon task can be rejected by Task Scheduler before
 rem cmd.exe reaches its script.  The bot's own logon task is known-good, so
 rem it also performs this small, idempotent local 8081 recovery before Python
-rem starts.  It only touches JM娘's isolated runtime under %%LOCALAPPDATA%%.
+rem starts.  It only touches JM娘's per-user isolated runtime.
+if /i "%~1"=="--preflight" (
+    call :preflight
+    exit /b !ERRORLEVEL!
+)
+
 call :ensure_portable_napcat
-if /i "%~1"=="--preflight" exit /b 0
 
 :restart
 >> "%LOG%" echo [%date% %time%] [INFO] 启动 JM娘。
@@ -42,7 +53,6 @@ goto restart
 :ensure_portable_napcat
 %SystemRoot%\System32\netstat.exe -ano | %SystemRoot%\System32\findstr.exe /r /c:":8081 .*LISTENING" >nul
 if not errorlevel 1 (
-    >> "%LOG%" echo [%date% %time%] [INFO] 本机 NapCat 8081 已可用，无需重复启动。
     goto :eof
 )
 
@@ -80,3 +90,10 @@ set "NAPCAT_START_CODE=%ERRORLEVEL%"
 popd
 if not "%NAPCAT_START_CODE%"=="0" >> "%LOG%" echo [%date% %time%] [WARN] 便携 NapCat 启动命令返回 %NAPCAT_START_CODE%。
 goto :eof
+
+:preflight
+if not exist "%NAPCAT_NODE%" exit /b 4
+if not exist "%NAPCAT_ROOT%\index.js" exit /b 5
+if not exist "%NAPCAT_PROFILE_DIR%" exit /b 6
+for /f "usebackq delims=" %%F in (`dir /b /a-d "%NAPCAT_PROFILE_DIR%\napcat_*.json" 2^>nul ^| %SystemRoot%\System32\findstr.exe /r /x "napcat_[0-9][0-9]*\.json"`) do exit /b 0
+exit /b 7
